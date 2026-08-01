@@ -1,3 +1,5 @@
+import { agentGateway } from "../../services/sarvam/agentGateway";
+
 export interface ScoringInput {
   companySize: string;
   annualRevenue: string;
@@ -6,6 +8,25 @@ export interface ScoringInput {
 }
 
 export class ScoringAgent {
+  async calculateICPScoreAsync(input: ScoringInput): Promise<number> {
+    // Prefer Sarvam AI agent if configured
+    if (agentGateway.isConfigured("agt-scoring")) {
+      const response = await agentGateway.runAgent("agt-scoring", {
+        company_size: input.companySize,
+        annual_revenue: input.annualRevenue,
+        industry: input.industry,
+        has_verified_email: input.hasVerifiedEmail,
+      });
+      if (response && response.success && response.output) {
+        const score = response.output.total_score || response.output.scored_lead?.total_score;
+        if (typeof score === "number") return Math.min(100, Math.max(0, score));
+      }
+    }
+
+    // Fallback: Local calculation
+    return this.calculateICPScore(input);
+  }
+
   calculateICPScore(input: ScoringInput): number {
     let score = 50;
 

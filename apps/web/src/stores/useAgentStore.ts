@@ -3,14 +3,31 @@ import { AgentStatus } from "@/types";
 import { mockAgents } from "@/lib/mockData";
 import { agentApi } from "@/services/apiClient";
 
+interface PipelineRun {
+  id: string;
+  campaignName: string;
+  query: string;
+  status: string;
+  totalLeadsFound: number;
+  verifiedLeads: number;
+  highScoreLeads: number;
+  durationMs: number;
+  createdAt: string;
+}
+
 interface AgentState {
   agents: AgentStatus[];
   isLoading: boolean;
   activeAgentLogs: { timestamp: string; level: "info" | "warn" | "error"; message: string }[];
   selectedAgent: AgentStatus | null;
+  pipelineRuns: PipelineRun[];
+  isPipelineRunning: boolean;
   fetchAgents: () => Promise<void>;
   setSelectedAgent: (agent: AgentStatus | null) => void;
   triggerAgent: (id: string, query?: string) => Promise<void>;
+  triggerSingleAgent: (id: string, input: Record<string, any>) => Promise<void>;
+  fetchPipelineRuns: () => Promise<void>;
+  startPipeline: (params: { query: string; industry?: string; category?: string; location?: string; targetCount?: number }) => Promise<void>;
 }
 
 export const useAgentStore = create<AgentState>((set, get) => ({
@@ -18,6 +35,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   isLoading: false,
   activeAgentLogs: mockAgents[0]?.logs || [],
   selectedAgent: mockAgents[0] || null,
+  pipelineRuns: [],
+  isPipelineRunning: false,
+
   fetchAgents: async () => {
     set({ isLoading: true });
     const fetchedAgents = await agentApi.getAgents();
@@ -28,11 +48,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       isLoading: false,
     });
   },
+
   setSelectedAgent: (agent) =>
     set({
       selectedAgent: agent,
       activeAgentLogs: agent ? agent.logs : [],
     }),
+
   triggerAgent: async (id, query = "Enterprise AI prospects") => {
     const timestamp = new Date().toLocaleTimeString();
     
@@ -67,5 +89,129 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     // Trigger backend API
     await agentApi.triggerAgent(id, query);
+  },
+
+  triggerSingleAgent: async (id, input) => {
+    const timestamp = new Date().toLocaleTimeString();
+    
+    set((state) => ({
+      agents: state.agents.map((agt) =>
+        agt.id === id
+          ? {
+              ...agt,
+              status: "running",
+              runningJobs: agt.runningJobs + 1,
+              logs: [
+                {
+                  timestamp,
+                  level: "info",
+                  message: `[Sarvam AI] Agent triggered with input: ${JSON.stringify(input).substring(0, 100)}`,
+                },
+                ...agt.logs,
+              ],
+            }
+          : agt
+      ),
+      activeAgentLogs: [
+        {
+          timestamp,
+          level: "info",
+          message: `[Sarvam AI] Agent ${id} triggered individually`,
+        },
+        ...get().activeAgentLogs,
+      ],
+    }));
+
+    const result = await agentApi.triggerSingleAgent(id, input);
+
+    // Update with result
+    set((state) => ({
+      agents: state.agents.map((agt) =>
+        agt.id === id
+          ? {
+              ...agt,
+              status: result.success ? "active" : "error",
+              runningJobs: Math.max(0, agt.runningJobs - 1),
+              totalExecutions: agt.totalExecutions + 1,
+              logs: [
+                {
+                  timestamp: new Date().toLocaleTimeString(),
+                  level: result.success ? "info" : "error",
+                  message: result.success
+                    ? `[Sarvam AI] Completed in ${result.duration_ms || 0}ms (${result.tokens_used || 0} tokens)`
+                    : `[Sarvam AI] Error: ${result.error || "Unknown error"}`,
+                },
+                ...agt.logs,
+              ],
+            }
+          : agt
+      ),
+    }));
+  },
+
+  fetchPipelineRuns: async () => {
+    const runs = await agentApi.getPipelineRuns();
+    set({
+      pipelineRuns: runs.map((r: any) => ({
+        id: r.id,
+        campaignName: r.campaign_name,
+        query: r.query,
+        status: r.status,
+        totalLeadsFound: r.total_leads_found,
+        verifiedLeads: r.verified_leads,
+        highScoreLeads: r.high_score_leads,
+        durationMs: r.duration_ms,
+        createdAt: r.created_at,
+      })),
+    });
+  },
+
+  startPipeline: async (params) => {
+    set({ isPipelineRunning: true });
+
+    const timestamp = new Date().toLocaleTimeString();
+
+    // Add log entries for pipeline start
+    set((state) => ({
+      activeAgentLogs: [
+        {
+          timestamp,
+          level: "info",
+          message: `[Pipeline] Starting full lead generation pipeline: "${params.query}" (${params.category || "B2B"})`,
+        },
+        ...state.activeAgentLogs,
+      ],
+    }));
+
+    try {
+      const result = await agentApi.triggerAgent("agt-orchestrator", params.query);
+
+      set((state) => ({
+        isPipelineRunning: false,
+        activeAgentLogs: [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: "info",
+            message: `[Pipeline] Completed! ${result.totalLeadsFound || result.processedCount || 0} leads processed in ${result.durationMs || 0}ms`,
+          },
+          ...state.activeAgentLogs,
+        ],
+      }));
+
+      // Refresh pipeline runs list
+      get().fetchPipelineRuns();
+    } catch (err: any) {
+      set((state) => ({
+        isPipelineRunning: false,
+        activeAgentLogs: [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: "error",
+            message: `[Pipeline] Failed: ${err?.message || "Unknown error"}`,
+          },
+          ...state.activeAgentLogs,
+        ],
+      }));
+    }
   },
 }));

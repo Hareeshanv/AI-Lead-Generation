@@ -135,6 +135,35 @@ export const leadApi = {
 export const agentApi = {
   getAgents: async (): Promise<AgentStatus[]> => {
     try {
+      // Try real API first
+      const response = await apiClient.get("/agents");
+      if (response.data?.agents?.length > 0) {
+        return response.data.agents.map((agt: any) => ({
+          id: agt.id,
+          name: agt.name,
+          type: agt.type,
+          status: agt.status || "idle",
+          description: agt.description,
+          runningJobs: agt.running_jobs || 0,
+          successRate: Number(agt.success_rate) || 99.0,
+          totalExecutions: agt.total_executions || 0,
+          avgLatency: agt.avg_latency || "500ms",
+          lastActive: agt.sarvam_configured ? "Sarvam AI Connected" : "Local Stub",
+          config: {
+            model: agt.model || "gpt-4o",
+            temperature: Number(agt.temperature) || 0.2,
+            concurrency: agt.concurrency || 10,
+          },
+          logs: [
+            { timestamp: new Date().toLocaleTimeString(), level: "info" as const, message: `Agent ${agt.name} status: ${agt.sarvam_configured ? "Connected to Sarvam AI" : "Running locally"}` },
+          ],
+        }));
+      }
+    } catch {
+      // Fall through to Supabase
+    }
+
+    try {
       const { data, error } = await supabase.from("agents").select("*");
       if (error || !data || data.length === 0) return mockAgents;
       return data.map((agt: any) => ({
@@ -154,7 +183,7 @@ export const agentApi = {
           concurrency: agt.concurrency || 10,
         },
         logs: [
-          { timestamp: new Date().toLocaleTimeString(), level: "info", message: `Agent ${agt.name} live in Supabase telemetry` },
+          { timestamp: new Date().toLocaleTimeString(), level: "info" as const, message: `Agent ${agt.name} live in Supabase telemetry` },
         ],
       }));
     } catch {
@@ -169,6 +198,43 @@ export const agentApi = {
     } catch (err: any) {
       console.warn("Backend API trigger fallback:", err?.message);
       return { success: true, message: `Simulated trigger for agent ${agentId}` };
+    }
+  },
+
+  triggerSingleAgent: async (agentId: string, input: Record<string, any>) => {
+    try {
+      const response = await apiClient.post(`/agents/${agentId}/trigger`, input);
+      return response.data;
+    } catch (err: any) {
+      console.warn(`Single agent trigger failed for ${agentId}:`, err?.message);
+      return { success: false, error: err?.message };
+    }
+  },
+
+  getAgentLogs: async (agentId: string) => {
+    try {
+      const response = await apiClient.get(`/agents/${agentId}/logs`);
+      return response.data?.logs || [];
+    } catch {
+      return [];
+    }
+  },
+
+  getPipelineRuns: async () => {
+    try {
+      const response = await apiClient.get("/agents/pipeline/runs");
+      return response.data?.runs || [];
+    } catch {
+      return [];
+    }
+  },
+
+  getPipelineRunDetail: async (runId: string) => {
+    try {
+      const response = await apiClient.get(`/agents/pipeline/runs/${runId}`);
+      return response.data;
+    } catch {
+      return null;
     }
   },
 };

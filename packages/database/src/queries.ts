@@ -53,4 +53,80 @@ export const dbQueries = {
     if (error) throw new Error(error.message);
     return data?.[0];
   },
+
+  // ═══════════════════════════════════════════
+  // Pipeline Runs
+  // ═══════════════════════════════════════════
+
+  async createPipelineRun(runData: Record<string, any>) {
+    const { data, error } = await dbClient.from("pipeline_runs").insert([runData]).select();
+    if (error) {
+      console.warn("Create pipeline run fallback:", error.message);
+      return null;
+    }
+    return data?.[0];
+  },
+
+  async updatePipelineRun(runId: string, updates: Record<string, any>) {
+    const { data, error } = await dbClient
+      .from("pipeline_runs")
+      .update(updates)
+      .eq("id", runId)
+      .select();
+    if (error) console.warn("Update pipeline run failed:", error.message);
+    return data?.[0];
+  },
+
+  async getPipelineRuns(limit: number = 20) {
+    const { data, error } = await dbClient
+      .from("pipeline_runs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) return [];
+    return data || [];
+  },
+
+  async getPipelineRunById(runId: string) {
+    const { data, error } = await dbClient
+      .from("pipeline_runs")
+      .select("*")
+      .eq("id", runId)
+      .single();
+    if (error) return null;
+    return data;
+  },
+
+  // ═══════════════════════════════════════════
+  // Agent Executions (per-step tracking)
+  // ═══════════════════════════════════════════
+
+  async logAgentExecution(execData: Record<string, any>) {
+    const { data, error } = await dbClient.from("agent_executions").insert([execData]).select();
+    if (error) {
+      console.warn("Log agent execution fallback:", error.message);
+      return null;
+    }
+    return data?.[0];
+  },
+
+  async getAgentExecutions(pipelineRunId: string) {
+    const { data, error } = await dbClient
+      .from("agent_executions")
+      .select("*")
+      .eq("pipeline_run_id", pipelineRunId)
+      .order("created_at", { ascending: true });
+    if (error) return [];
+    return data || [];
+  },
+
+  // ═══════════════════════════════════════════
+  // Agent Status (all 14 agents)
+  // ═══════════════════════════════════════════
+
+  async getAllAgentStatuses() {
+    const { data, error } = await dbClient.from("agents").select("*");
+    if (error) return [];
+    return data || [];
+  },
 };

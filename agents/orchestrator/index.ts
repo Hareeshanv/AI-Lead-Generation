@@ -1,3 +1,4 @@
+import { agentGateway, PipelineParams, PipelineRunResult } from "../../services/sarvam/agentGateway";
 import { searchAgent } from "../search";
 import { verifierAgent } from "../verifier";
 import { scoringAgent } from "../scoring";
@@ -8,15 +9,47 @@ import { dbQueries } from "../../packages/database/src";
 export interface AgentRunParams {
   query: string;
   industry?: string;
+  category?: "B2B" | "B2C";
+  location?: string;
   targetCount?: number;
 }
 
 export class AgentOrchestrator {
-  async runLeadGenerationPipeline(params: AgentRunParams) {
+  /**
+   * Run the full lead generation pipeline.
+   *
+   * If Sarvam AI agents are configured, the pipeline runs through the
+   * Sarvam AI platform. Otherwise, it falls back to the local agent stubs.
+   */
+  async runLeadGenerationPipeline(params: AgentRunParams): Promise<PipelineRunResult | any> {
     const startTime = Date.now();
     console.log(`[Orchestrator] Starting autonomous lead pipeline for query: "${params.query}"`);
 
     await dbQueries.logAgentTelemetry("agt-planner", "info", `Orchestration pipeline started for "${params.query}"`);
+
+    // ═══════════════════════════════════════════
+    // STRATEGY: Prefer Sarvam AI gateway if configured
+    // ═══════════════════════════════════════════
+
+    if (agentGateway.isConfigured("agt-search") || agentGateway.isConfigured("agt-planner")) {
+      console.log("[Orchestrator] Sarvam AI agents detected → routing through platform gateway.");
+
+      const pipelineParams: PipelineParams = {
+        query: params.query,
+        industry: params.industry,
+        category: params.category || "B2B",
+        location: params.location,
+        targetCount: params.targetCount,
+      };
+
+      return await agentGateway.runPipeline(pipelineParams);
+    }
+
+    // ═══════════════════════════════════════════
+    // FALLBACK: Local agent stubs (original behavior)
+    // ═══════════════════════════════════════════
+
+    console.log("[Orchestrator] No Sarvam AI agents configured → using local agent stubs.");
 
     // 1. Search Discovery
     const rawLeads = await searchAgent.run(params.query, params.industry);
@@ -59,7 +92,7 @@ export class AgentOrchestrator {
         company: rawLead.company,
         email: rawLead.email,
         phone: "+1 (555) 019-2831",
-        location: "San Francisco, CA",
+        location: params.location || "San Francisco, CA",
         score: leadScore,
         status: leadScore >= 80 ? "Hot" : "Warm",
         source: "AI Search Discovery Agent",
@@ -85,9 +118,16 @@ export class AgentOrchestrator {
     await dbQueries.logAgentTelemetry("agt-planner", "info", `Pipeline complete in ${duration}ms. ${processedLeads.length} leads enriched and saved.`);
 
     return {
+      pipelineRunId: `run-local-${Date.now()}`,
       success: true,
-      processedCount: processedLeads.length,
+      totalLeadsFound: rawLeads.length,
+      verifiedLeads: processedLeads.length,
+      highScoreLeads: processedLeads.filter((l) => l.score >= 80).length,
+      emailsGenerated: processedLeads.length,
+      crmSynced: 0,
       durationMs: duration,
+      steps: [],
+      errors: [],
       leads: processedLeads,
     };
   }

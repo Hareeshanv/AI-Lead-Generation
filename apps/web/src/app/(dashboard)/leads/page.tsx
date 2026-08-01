@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Modal } from "@/components/ui/Modal";
 import { useLeadStore } from "@/stores/useLeadStore";
-import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone } from "lucide-react";
+import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone, Users } from "lucide-react";
 import Link from "next/link";
 
 export default function LeadsPage() {
@@ -93,48 +93,67 @@ export default function LeadsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {filteredLeads.map((lead) => (
-                <tr key={lead.id} className="hover:bg-card/40 transition-colors group">
-                  <td className="py-3.5 px-4">
-                    <div className="flex items-center gap-3">
-                      <Avatar src={lead.avatar} name={lead.name} />
-                      <div>
-                        <Link href={`/leads/${lead.id}`} className="font-semibold text-foreground hover:text-primary transition-colors">
-                          {lead.name}
-                        </Link>
-                        <p className="text-xs text-muted-foreground">{lead.title}</p>
+              {filteredLeads.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center">
+                    <div className="max-w-sm mx-auto space-y-3">
+                      <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                        <Users className="w-5 h-5" />
                       </div>
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <div className="font-medium text-foreground">{lead.company}</div>
-                    <div className="text-xs text-muted-foreground">{lead.industry}</div>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 font-mono font-bold text-xs border border-indigo-500/20">
-                      <Flame className="w-3.5 h-3.5 text-rose-400" />
-                      {lead.score}/100
-                    </div>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <StatusBadge status={lead.status} />
-                  </td>
-                  <td className="py-3.5 px-4 text-xs text-muted-foreground">{lead.source}</td>
-                  <td className="py-3.5 px-4 text-xs text-foreground font-medium">{lead.owner}</td>
-                  <td className="py-3.5 px-4 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Link href={`/leads/${lead.id}`}>
-                        <Button variant="ghost" size="icon" aria-label="View lead details">
-                          <Eye className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
-                        </Button>
-                      </Link>
-                      <Button variant="ghost" size="icon" aria-label="Send email">
-                        <Mail className="w-4 h-4 text-muted-foreground hover:text-indigo-400" />
+                      <h4 className="font-bold text-foreground text-sm">No Leads in Database</h4>
+                      <p className="text-xs text-muted-foreground">
+                        Dummy sample leads cleared out. Click <strong className="text-foreground">"+ Add Lead"</strong> or run an AI Agent to generate new prospects.
+                      </p>
+                      <Button variant="primary" size="sm" onClick={() => setIsModalOpen(true)}>
+                        <Plus className="w-4 h-4 mr-1.5" /> Add Your First Lead
                       </Button>
                     </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredLeads.map((lead) => (
+                  <tr key={lead.id} className="hover:bg-card/40 transition-colors group">
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-3">
+                        <Avatar src={lead.avatar} name={lead.name} />
+                        <div>
+                          <Link href={`/leads/${lead.id}`} className="font-semibold text-foreground hover:text-primary transition-colors">
+                            {lead.name}
+                          </Link>
+                          <p className="text-xs text-muted-foreground">{lead.title}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-medium text-foreground">{lead.company}</div>
+                      <div className="text-xs text-muted-foreground">{lead.industry}</div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 font-mono font-bold text-xs border border-indigo-500/20">
+                        <Flame className="w-3.5 h-3.5 text-rose-400" />
+                        {lead.score}/100
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <StatusBadge status={lead.status} />
+                    </td>
+                    <td className="py-3.5 px-4 text-xs text-muted-foreground">{lead.source}</td>
+                    <td className="py-3.5 px-4 text-xs text-foreground font-medium">{lead.owner}</td>
+                    <td className="py-3.5 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Link href={`/leads/${lead.id}`}>
+                          <Button variant="ghost" size="icon" aria-label="View lead details">
+                            <Eye className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
+                          </Button>
+                        </Link>
+                        <Button variant="ghost" size="icon" aria-label="Send email">
+                          <Mail className="w-4 h-4 text-muted-foreground hover:text-indigo-400" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
