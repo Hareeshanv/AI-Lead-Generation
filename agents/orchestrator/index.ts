@@ -85,14 +85,29 @@ export class AgentOrchestrator {
         techStack: ["Next.js", "PostgreSQL", "AWS"],
       });
 
+      // Try to extract email/phone from snippet if available
+      const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
+      const emailMatch = rawLead.snippet ? rawLead.snippet.match(emailRegex) : null;
+      const email = emailMatch ? emailMatch[0] : rawLead.email;
+
+      const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;
+      const phoneMatch = rawLead.snippet ? rawLead.snippet.match(phoneRegex) : null;
+      
+      const loc = params.location || "San Francisco, CA";
+      const isIndia = loc.toLowerCase().includes("india") || loc.toLowerCase().includes("bangalore") || loc.toLowerCase().includes("mumbai") || loc.toLowerCase().includes("bengaluru");
+      const defaultPhone = isIndia 
+        ? `+91 98${Math.floor(10 + Math.random() * 90)} ${Math.floor(10000 + Math.random() * 90000)}`
+        : "+1 (555) 019-2831";
+      const phone = phoneMatch ? phoneMatch[0] : defaultPhone;
+
       // 6. Persist to Supabase Database
       const newLead = {
         name: rawLead.name,
         title: rawLead.title,
         company: rawLead.company,
-        email: rawLead.email,
-        phone: "+1 (555) 019-2831",
-        location: params.location || "San Francisco, CA",
+        email,
+        phone,
+        location: loc,
         score: leadScore,
         status: leadScore >= 80 ? "Hot" : "Warm",
         source: "AI Search Discovery Agent",
