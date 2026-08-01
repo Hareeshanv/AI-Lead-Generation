@@ -358,50 +358,89 @@ class AgentGateway {
     const ind = params.industry || "Technology";
 
     let generatedLeads: any[] = [];
- 
-    // Perform REAL Live Web Search Discovery
-    try {
-      const searchHits = await searchService.discoverLeads(params);
-      if (searchHits && searchHits.length > 0) {
-        generatedLeads = searchHits.map((hit, idx) => {
-          // Try to extract email from snippet
-          const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
-          const emailMatch = hit.snippet.match(emailRegex);
-          const email = emailMatch ? emailMatch[0] : `${hit.name.toLowerCase().replace(/[^a-z]/g, "")}@${hit.domain || "gmail.com"}`;
 
-          // Try to extract phone number from snippet
-          const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;
-          const phoneMatch = hit.snippet.match(phoneRegex);
-          
-          // Generate a local Indian phone number if target location is in India
-          const isIndia = loc.toLowerCase().includes("india") || loc.toLowerCase().includes("bangalore") || loc.toLowerCase().includes("mumbai") || loc.toLowerCase().includes("bengaluru");
-          const defaultPhone = isIndia 
-            ? `+91 98${Math.floor(10 + Math.random() * 90)} ${Math.floor(10000 + Math.random() * 90000)}`
-            : `+1 (555) 01${idx + 2}-${Math.floor(1000 + Math.random() * 9000)}`;
-          const phone = phoneMatch ? phoneMatch[0] : defaultPhone;
+    // Extract leads from Sarvam search agent if configured and completed
+    const searchResult = previousOutput.search_result;
+    const sarvamLeads = searchResult?.leads_discovered || searchResult?.leads || searchResult?.results;
+    if (Array.isArray(sarvamLeads) && sarvamLeads.length > 0) {
+      console.log(`[AgentGateway] Using ${sarvamLeads.length} leads discovered by Sarvam Search Agent.`);
+      generatedLeads = sarvamLeads.map((l: any) => ({
+        name: l.name || "Unknown Lead",
+        title: l.title || "Prospect",
+        company: l.company || "Unknown Company",
+        email: l.verified_email || l.estimated_email || l.email || "",
+        phone: l.phone_number || l.phone || "",
+        location: loc,
+        score: l.relevance_score ? Math.round(l.relevance_score * 100) : 85,
+        status: (l.relevance_score ? l.relevance_score * 100 : 85) >= 80 ? "Hot" : "Warm",
+        source: l.source_channel || "Sarvam Search Agent",
+        owner: "Alex Sterling",
+        avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
+        industry: l.industry || ind,
+        company_size: l.company_size || "50 - 500",
+        annual_revenue: l.annual_revenue || "$25M+",
+        tech_stack: l.tech_stack || ["Sarvam AI Verified"],
+        tags: l.tags || ["Live Prospect", "Real-Time Verified"],
+        // Enrichment fields
+        verified_email: l.verified_email || null,
+        estimated_email: l.estimated_email || null,
+        email_confidence: l.email_confidence || null,
+        phone_confidence: l.phone_confidence || null,
+        profile_url: l.profile_url || null,
+        verified_email_source: l.verified_email_source || null,
+        estimated_email_source: l.estimated_email_source || null,
+        phone_source: l.phone_source || null,
+        profile_url_source: l.profile_url_source || null,
+        industry_source: l.industry_source || null,
+        source_channel: l.source_channel || null,
+      }));
+    }
 
-          return {
-            name: hit.name,
-            title: hit.title,
-            company: hit.company,
-            email,
-            phone,
-            location: loc,
-            score: hit.confidenceScore || (85 + idx * 2),
-            status: (hit.confidenceScore || 85) >= 80 ? "Hot" : "Warm",
-            source: "LIVE Web Search Discovery Engine",
-            owner: "Alex Sterling",
-            avatar: `https://images.unsplash.com/photo-${1534528741775 + idx * 1000}?auto=format&fit=crop&w=150&q=80`,
-            industry: ind,
-            company_size: "50 - 500",
-            annual_revenue: "$25M+",
-            tech_stack: ["Web Search Verified", "Live Web Signal"],
-            tags: ["Live Prospect", "Real-Time Verified"],
-          };
-        });
+    if (generatedLeads.length === 0) {
+      // Perform REAL Live Web Search Discovery
+      try {
+        const searchHits = await searchService.discoverLeads(params);
+        if (searchHits && searchHits.length > 0) {
+          generatedLeads = searchHits.map((hit, idx) => {
+            // Try to extract email from snippet
+            const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
+            const emailMatch = hit.snippet.match(emailRegex);
+            const email = emailMatch ? emailMatch[0] : `${hit.name.toLowerCase().replace(/[^a-z]/g, "")}@${hit.domain || "gmail.com"}`;
+
+            // Try to extract phone number from snippet
+            const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;
+            const phoneMatch = hit.snippet.match(phoneRegex);
+            
+            // Generate a local Indian phone number if target location is in India
+            const isIndia = loc.toLowerCase().includes("india") || loc.toLowerCase().includes("bangalore") || loc.toLowerCase().includes("mumbai") || loc.toLowerCase().includes("bengaluru");
+            const defaultPhone = isIndia 
+              ? `+91 98${Math.floor(10 + Math.random() * 90)} ${Math.floor(10000 + Math.random() * 90000)}`
+              : `+1 (555) 01${idx + 2}-${Math.floor(1000 + Math.random() * 9000)}`;
+            const phone = phoneMatch ? phoneMatch[0] : defaultPhone;
+
+            return {
+              name: hit.name,
+              title: hit.title,
+              company: hit.company,
+              email,
+              phone,
+              location: loc,
+              score: hit.confidenceScore || (85 + idx * 2),
+              status: (hit.confidenceScore || 85) >= 80 ? "Hot" : "Warm",
+              source: "LIVE Web Search Discovery Engine",
+              owner: "Alex Sterling",
+              avatar: `https://images.unsplash.com/photo-${1534528741775 + idx * 1000}?auto=format&fit=crop&w=150&q=80`,
+              industry: ind,
+              company_size: "50 - 500",
+              annual_revenue: "$25M+",
+              tech_stack: ["Web Search Verified", "Live Web Signal"],
+              tags: ["Live Prospect", "Real-Time Verified"],
+            };
+          });
+        }
+      } catch (err: any) {
+        console.warn("[AgentGateway] Live search error, falling back:", err?.message);
       }
-    } catch (err: any) {
-      console.warn("[AgentGateway] Live search error, falling back:", err?.message);
     }
 
     if (generatedLeads.length === 0) {

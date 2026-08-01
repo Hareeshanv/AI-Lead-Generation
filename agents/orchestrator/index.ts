@@ -118,6 +118,18 @@ export class AgentOrchestrator {
         annual_revenue: "$45M",
         tech_stack: ["Next.js", "PostgreSQL", "AWS"],
         tags: ["AI Verified", "High ICP Fit"],
+        // Enrichment fields
+        verified_email: null,
+        estimated_email: rawLead.email || null,
+        email_confidence: "low",
+        phone_confidence: null,
+        profile_url: rawLead.profile_url || null,
+        verified_email_source: null,
+        estimated_email_source: "Pattern derived from name + domain",
+        phone_source: null,
+        profile_url_source: null,
+        industry_source: null,
+        source_channel: "Local Search",
       };
 
       try {
