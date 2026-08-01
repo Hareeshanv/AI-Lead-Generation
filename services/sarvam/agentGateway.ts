@@ -92,18 +92,35 @@ export interface PipelineRunResult {
 
 class AgentGateway {
   /**
-   * Check if a specific agent has a Sarvam AI platform ID configured.
-   */
-  isConfigured(localAgentId: string): boolean {
-    const sarvamId = AGENT_MAP[localAgentId];
-    return !!sarvamId && sarvamId.length > 0 && sarvamClient.isConfigured();
-  }
-
-  /**
    * Get the Sarvam platform agent ID for a local agent ID.
    */
   getSarvamAgentId(localAgentId: string): string | null {
-    return AGENT_MAP[localAgentId] || null;
+    const envVarMap: Record<string, string | undefined> = {
+      "agt-orchestrator": process.env.SARVAM_AGENT_ORCHESTRATOR_ID,
+      "agt-planner": process.env.SARVAM_AGENT_PLANNER_ID,
+      "agt-search": process.env.SARVAM_AGENT_SEARCH_ID,
+      "agt-crawler": process.env.SARVAM_AGENT_CRAWLER_ID,
+      "agt-extractor": process.env.SARVAM_AGENT_EXTRACTOR_ID,
+      "agt-enrichment": process.env.SARVAM_AGENT_ENRICHMENT_ID,
+      "agt-verifier": process.env.SARVAM_AGENT_VERIFIER_ID,
+      "agt-deduplication": process.env.SARVAM_AGENT_DEDUPLICATION_ID,
+      "agt-scoring": process.env.SARVAM_AGENT_SCORING_ID,
+      "agt-outreach": process.env.SARVAM_AGENT_OUTREACH_ID,
+      "agt-crm": process.env.SARVAM_AGENT_CRM_ID,
+      "agt-report": process.env.SARVAM_AGENT_REPORT_ID,
+      "agt-analytics": process.env.SARVAM_AGENT_ANALYTICS_ID,
+      "agt-scheduler": process.env.SARVAM_AGENT_SCHEDULER_ID,
+    };
+    const val = envVarMap[localAgentId];
+    return val && val.trim().length > 0 ? val.trim() : null;
+  }
+
+  /**
+   * Check if a specific agent has a Sarvam AI platform ID configured.
+   */
+  isConfigured(localAgentId: string): boolean {
+    const sarvamId = this.getSarvamAgentId(localAgentId);
+    return !!sarvamId && sarvamClient.isConfigured();
   }
 
   /**
@@ -117,11 +134,11 @@ class AgentGateway {
    * Get all agent IDs and their configuration status.
    */
   getAllAgents(): { id: string; name: string; configured: boolean; sarvamId: string | null }[] {
-    return Object.keys(AGENT_MAP).map((id) => ({
+    return Object.keys(AGENT_NAMES).map((id) => ({
       id,
       name: AGENT_NAMES[id] || id,
       configured: this.isConfigured(id),
-      sarvamId: AGENT_MAP[id] || null,
+      sarvamId: this.getSarvamAgentId(id),
     }));
   }
 
@@ -133,7 +150,7 @@ class AgentGateway {
     localAgentId: string,
     input: Record<string, any>
   ): Promise<SarvamAgentResponse | null> {
-    const sarvamId = AGENT_MAP[localAgentId];
+    const sarvamId = this.getSarvamAgentId(localAgentId);
 
     if (!sarvamId || !sarvamClient.isConfigured()) {
       console.log(

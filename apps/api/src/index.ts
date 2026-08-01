@@ -1,7 +1,11 @@
-import { app } from "./app";
 import * as dotenv from "dotenv";
+import * as path from "path";
 
-dotenv.config();
+// Load .env from workspace root or package root
+dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+
+import { app } from "./app";
 
 const PORT = process.env.PORT || 4000;
 

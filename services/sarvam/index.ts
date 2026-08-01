@@ -34,12 +34,12 @@ export interface SarvamAgentStatusResponse {
 }
 
 export class SarvamClient {
-  private baseURL: string;
-  private apiKey: string;
+  private get apiKey(): string {
+    return process.env.SARVAM_API_KEY || "";
+  }
 
-  constructor() {
-    this.apiKey = process.env.SARVAM_API_KEY || "";
-    this.baseURL = process.env.SARVAM_API_BASE_URL || "https://api.sarvam.ai/v1";
+  private get baseURL(): string {
+    return process.env.SARVAM_API_BASE_URL || "https://api.sarvam.ai/v1";
   }
 
   /** Check if the Sarvam API key is configured */
