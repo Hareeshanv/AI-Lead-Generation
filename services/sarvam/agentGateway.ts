@@ -405,7 +405,9 @@ class AgentGateway {
             // Try to extract email from snippet
             const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
             const emailMatch = hit.snippet.match(emailRegex);
-            const email = emailMatch ? emailMatch[0] : `${hit.name.toLowerCase().replace(/[^a-z]/g, "")}@${hit.domain || "gmail.com"}`;
+            const isCorporate = hit.name.endsWith("Contact");
+            const emailPrefix = isCorporate ? "info" : hit.name.toLowerCase().replace(/[^a-z]/g, "");
+            const email = emailMatch ? emailMatch[0] : `${emailPrefix}@${hit.domain || "gmail.com"}`;
 
             // Try to extract phone number from snippet
             const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;

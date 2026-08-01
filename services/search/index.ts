@@ -89,11 +89,12 @@ export class SearchProviderService {
         const rawUrl = urls[i] || "";
         const rawSnippet = snippets[i] || "";
 
-        const parts = rawTitle.split(/[-|–]/);
-        if (parts.length >= 2) {
-          const name = parts[0].trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim();
-          const title = parts[1].trim();
-          const company = parts[2] ? parts[2].replace(/LinkedIn.*$/i, "").trim() : `${params.industry || "Tech"} Solutions`;
+        // Split title by en-dash, em-dash, hyphen, pipe, or colon
+        const parts = rawTitle.split(/\s*[-–—|:]\s*/);
+        if (parts.length >= 1) {
+          let name = parts[0].trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim();
+          let title = parts[1] ? parts[1].trim() : "Coaching & Training Provider";
+          let company = parts[2] ? parts[2].replace(/LinkedIn.*$/i, "").trim() : "";
 
           if (name.length > 2 && !name.toLowerCase().includes("top") && !name.toLowerCase().includes("meet")) {
             let domain = "";
@@ -104,10 +105,26 @@ export class SearchProviderService {
               domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
             }
 
+            // Extract company name from domain if it's a company website
+            const rawCompanyFromDomain = domain.split(".")[0];
+            const cleanCompanyFromDomain = rawCompanyFromDomain ? rawCompanyFromDomain.charAt(0).toUpperCase() + rawCompanyFromDomain.slice(1) : "";
+
+            // Detect if the search hit is a generic coaching/directory topic instead of a person profile
+            const isTopic = /best|top|list|coaching|training|academy|school|course|services|system|solutions|database|mentors/i.test(name) || !rawUrl.includes("linkedin.com/in/");
+
+            if (isTopic) {
+              // For directories/companies, represent them as corporate contacts rather than people
+              company = company || cleanCompanyFromDomain || "Educational Center";
+              name = `${company} Contact`;
+              title = "Admissions & Support Office";
+            } else {
+              company = company || cleanCompanyFromDomain || "Independent";
+            }
+
             liveLeads.push({
               name,
-              title: title.length > 35 ? title.substring(0, 35) : title,
-              company: company || "Independent / Enterprise",
+              title: title.length > 45 ? title.substring(0, 45) : title,
+              company: company,
               domain,
               snippet: rawSnippet.substring(0, 150),
               confidenceScore: 85 + Math.floor(Math.random() * 10),

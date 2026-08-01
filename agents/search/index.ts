@@ -20,13 +20,17 @@ export class SearchAgent {
 
     // Fallback: Local stub
     const results = await searchService.discoverLeads({ query, industry });
-    return results.map((res) => ({
-      name: res.name,
-      title: res.title,
-      company: res.company,
-      domain: res.domain,
-      email: `${res.name.toLowerCase().replace(/[^a-z]/g, "")}@${res.domain}`,
-    }));
+    return results.map((res) => {
+      const isCorporate = res.name.endsWith("Contact");
+      const emailPrefix = isCorporate ? "info" : res.name.toLowerCase().replace(/[^a-z]/g, "");
+      return {
+        name: res.name,
+        title: res.title,
+        company: res.company,
+        domain: res.domain,
+        email: `${emailPrefix}@${res.domain}`,
+      };
+    });
   }
 }
 
