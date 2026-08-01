@@ -168,6 +168,58 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- 12. Pipeline Runs
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id TEXT PRIMARY KEY DEFAULT ('run-' || substr(gen_random_uuid()::text, 1, 12)),
+    campaign_name TEXT NOT NULL,
+    query TEXT NOT NULL,
+    industry TEXT DEFAULT 'Technology',
+    category TEXT DEFAULT 'B2B',
+    location TEXT DEFAULT 'Global',
+    target_count INT DEFAULT 50,
+    status TEXT DEFAULT 'running',            -- running, completed, completed_with_errors, failed
+    total_leads_found INT DEFAULT 0,
+    verified_leads INT DEFAULT 0,
+    high_score_leads INT DEFAULT 0,
+    emails_generated INT DEFAULT 0,
+    crm_synced INT DEFAULT 0,
+    duration_ms INT,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS & Policies for pipeline_runs
+ALTER TABLE pipeline_runs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all pipeline_runs access" ON pipeline_runs FOR ALL USING (true) WITH CHECK (true);
+
+-- 13. Agent Executions
+CREATE TABLE IF NOT EXISTS agent_executions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    pipeline_run_id TEXT REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL,                   -- e.g. "agt-search"
+    agent_name TEXT NOT NULL,                 -- e.g. "Search Discovery"
+    status TEXT DEFAULT 'pending',            -- pending, running, completed, failed, skipped
+    input JSONB,
+    output JSONB,
+    error TEXT,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    duration_ms INT DEFAULT 0,
+    tokens_used INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS & Policies for agent_executions
+ALTER TABLE agent_executions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all agent_executions access" ON agent_executions FOR ALL USING (true) WITH CHECK (true);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created ON pipeline_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_executions_pipeline ON agent_executions(pipeline_run_id);
+CREATE INDEX IF NOT EXISTS idx_agent_executions_agent ON agent_executions(agent_id);
+
 -- Seed Initial Enterprise Demo Data into Supabase
 INSERT INTO agents (id, name, type, status, description, running_jobs, success_rate, total_executions, avg_latency, model, temperature, concurrency) VALUES
 ('agt-planner', 'Planner Agent', 'Strategy & Orchestration', 'active', 'Decomposes lead gen goals into sub-tasks and selects target ICP search channels.', 3, 99.40, 1420, '450ms', 'gpt-4o', 0.20, 5),
@@ -177,5 +229,11 @@ INSERT INTO agents (id, name, type, status, description, running_jobs, success_r
 ('agt-enrichment', 'Company & Contact Enrichment Agent', 'Enrichment Engine', 'active', 'Cross-references company data with Clearbit, Apollo, and social profiles.', 4, 97.50, 6700, '1.5s', 'claude-3-5-sonnet', 0.20, 8),
 ('agt-verifier', 'Email & Phone Verifier Agent', 'Verification & Deliverability', 'active', 'Performs real-time MX record checks, SMTP handshakes, and phone validation.', 6, 99.80, 15200, '310ms', 'rule-engine-v1', 0.00, 30),
 ('agt-scoring', 'ICP Lead Scoring Agent', 'Predictive Qualification', 'active', 'Scores leads from 0-100 based on company size, revenue, tech stack, and intent signals.', 1, 100.00, 11000, '150ms', 'custom-random-forest', 0.10, 15),
-('agt-outreach', 'Hyper-Personalized Outreach Agent', 'Messaging & Copywriting', 'active', 'Generates custom 1-on-1 cold email copy referencing prospect news and tech stack.', 5, 98.90, 4300, '1.1s', 'gpt-4o', 0.70, 5)
+('agt-outreach', 'Hyper-Personalized Outreach Agent', 'Hyper-Personalization', 'active', 'Generates custom 1-on-1 cold email copy referencing prospect news and tech stack.', 5, 98.90, 4300, '1.1s', 'gpt-4o', 0.70, 5),
+('agt-deduplication', 'Entity Deduplication Agent', 'Data Quality', 'idle', 'Prevents duplicate leads using email normalization, fuzzy matching, and DB checks.', 0, 99.90, 0, '50ms', 'rule-engine-v1', 0.00, 20),
+('agt-crm', 'CRM Synchronization Agent', 'Integration & Sync', 'idle', 'Pushes verified high-scoring leads to HubSpot, Salesforce, or custom CRMs.', 0, 98.50, 0, '1.1s', 'gpt-4o-mini', 0.10, 5),
+('agt-report', 'Report Generator Agent', 'Reporting & Export', 'idle', 'Compiles pipeline statistics and generates PDF/CSV executive reports.', 0, 99.20, 0, '2.5s', 'gpt-4o', 0.30, 3),
+('agt-analytics', 'Analytics & ROI Tracker Agent', 'Observability & Metrics', 'active', 'Tracks agent execution times, success rates, API token costs, and conversions.', 0, 99.70, 0, '200ms', 'gpt-4o-mini', 0.10, 3),
+('agt-scheduler', 'Task & Lifecycle Scheduler Agent', 'Automation & Scheduling', 'active', 'Manages cron-based scheduled runs, retry logic, and follow-up sequences.', 0, 99.50, 0, '100ms', 'gpt-4o-mini', 0.10, 3),
+('agt-orchestrator', 'Master Orchestrator Agent', 'Multi-Agent Coordinator', 'active', 'The master controller that coordinates all agents in the lead generation pipeline.', 0, 99.80, 0, '350ms', 'gpt-4o', 0.20, 5)
 ON CONFLICT (id) DO NOTHING;
