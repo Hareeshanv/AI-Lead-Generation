@@ -1,21 +1,36 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
-import { mockCompanies } from "@/lib/mockData";
+import { companyApi } from "@/services/apiClient";
 import { Building2, Search, ExternalLink, Globe, Sparkles, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 
 export default function CompaniesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [domainInput, setDomainInput] = useState("");
-  const [companiesList, setCompaniesList] = useState(mockCompanies);
+  const [companiesList, setCompaniesList] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCompanies = async () => {
+      try {
+        const data = await companyApi.getCompanies();
+        setCompaniesList(data);
+      } catch (err) {
+        console.error("Failed to fetch companies:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchCompanies();
+  }, []);
 
   const handleEnrichDomain = () => {
     if (!domainInput) return;
@@ -79,7 +94,14 @@ export default function CompaniesPage() {
       </div>
 
       {/* Companies Grid */}
-      {filteredCompanies.length === 0 ? (
+      {isLoading ? (
+        <div className="glass-panel p-12 rounded-2xl border border-white/10 text-center space-y-4 mt-6">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Building2 className="w-6 h-6 animate-pulse" />
+          </div>
+          <h3 className="text-lg font-bold text-foreground">Loading Company Profiles...</h3>
+        </div>
+      ) : filteredCompanies.length === 0 ? (
         <div className="glass-panel p-12 rounded-2xl border border-white/10 text-center space-y-4 mt-6">
           <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
             <Building2 className="w-6 h-6" />
@@ -143,7 +165,7 @@ export default function CompaniesPage() {
                 <div className="space-y-1.5 mb-4">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tech Stack</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {company.techStack.slice(0, 4).map((tech) => (
+                    {company.techStack.slice(0, 4).map((tech: string) => (
                       <Badge key={tech} variant="indigo" className="text-[10px]">
                         {tech}
                       </Badge>

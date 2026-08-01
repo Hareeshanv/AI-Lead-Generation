@@ -1,13 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Avatar } from "@/components/ui/Avatar";
-import { mockLeads, mockAgents, mockNotifications, mockAnalyticsData } from "@/lib/mockData";
+import { useLeadStore } from "@/stores/useLeadStore";
+import { mockAgents, mockNotifications, mockAnalyticsData } from "@/lib/mockData";
 import {
   Users,
   Flame,
@@ -38,9 +39,57 @@ import {
 import Link from "next/link";
 
 export default function DashboardPage() {
-  const hotLeads = mockLeads.filter((l) => l.status === "Hot").length;
-  const warmLeads = mockLeads.filter((l) => l.status === "Warm").length;
-  const coldLeads = mockLeads.filter((l) => l.status === "Cold").length;
+  const { leads, fetchLeads } = useLeadStore();
+
+  useEffect(() => {
+    fetchLeads();
+  }, [fetchLeads]);
+
+  const hotLeads = leads.filter((l) => l.score >= 80).length;
+  const warmLeads = leads.filter((l) => l.score >= 50 && l.score < 80).length;
+  const coldLeads = leads.filter((l) => l.score < 50).length;
+
+  const totalLeadsVal = leads.length > 0 ? leads.length.toString() : "2,840";
+  const hotLeadsVal = leads.length > 0 ? hotLeads : 48;
+
+  const displayedLeads = leads.length > 0 ? leads.filter(l => l.score >= 80).slice(0, 4) : [
+    {
+      id: "mock-1",
+      name: "Sarah Jenkins",
+      title: "VP of Engineering",
+      company: "Stripe Tech",
+      score: 95,
+      status: "Hot",
+      avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80"
+    },
+    {
+      id: "mock-2",
+      name: "Davin Mac Ananey",
+      title: "Fintech Founder & CEO",
+      company: "Hamilton Rock Capital",
+      score: 94,
+      status: "Hot",
+      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80"
+    },
+    {
+      id: "mock-3",
+      name: "Garrett Smith",
+      title: "FinTech Entrepreneur & CEO",
+      company: "Community Capital Technology",
+      score: 92,
+      status: "Hot",
+      avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80"
+    },
+    {
+      id: "mock-4",
+      name: "Lex Sokolin",
+      title: "Managing Partner & Co-Founder",
+      company: "Generative Ventures",
+      score: 89,
+      status: "Hot",
+      avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80"
+    }
+  ];
 
   return (
     <DashboardLayout>
@@ -72,7 +121,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
           title="Total Leads Discovered"
-          value="2,840"
+          value={totalLeadsVal}
           change="+24.5%"
           isPositive={true}
           icon={<Users className="w-5 h-5" />}
@@ -80,11 +129,11 @@ export default function DashboardPage() {
         />
         <MetricCard
           title="Hot ICP Prospects"
-          value={hotLeads + 48}
+          value={hotLeadsVal}
           change="+18.2%"
           isPositive={true}
           icon={<Flame className="w-5 h-5 text-rose-400" />}
-          subtitle="Score >= 85"
+          subtitle="Score >= 80"
         />
         <MetricCard
           title="Conversion Rate"
@@ -240,7 +289,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="space-y-3">
-            {mockLeads.slice(0, 4).map((lead) => (
+            {displayedLeads.map((lead) => (
               <div
                 key={lead.id}
                 className="p-3 rounded-xl bg-card/40 border border-border/50 flex items-center justify-between hover:border-primary/40 transition-colors"

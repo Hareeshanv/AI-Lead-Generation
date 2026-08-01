@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -9,7 +9,11 @@ import { useCampaignStore } from "@/stores/useCampaignStore";
 import { Megaphone, Plus, Mail, Eye, MousePointer, Reply, Calendar } from "lucide-react";
 
 export default function CampaignsPage() {
-  const { campaigns, toggleCampaignStatus } = useCampaignStore();
+  const { campaigns, toggleCampaignStatus, fetchCampaigns, isLoading } = useCampaignStore();
+
+  useEffect(() => {
+    fetchCampaigns();
+  }, [fetchCampaigns]);
 
   return (
     <DashboardLayout>
@@ -25,44 +29,61 @@ export default function CampaignsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {campaigns.map((cmp) => (
-          <Card key={cmp.id} glass className="space-y-4 flex flex-col justify-between">
-            <div>
-              <div className="flex items-start justify-between">
-                <StatusBadge status={cmp.status} />
-                <span className="text-xs text-muted-foreground">{cmp.schedule}</span>
-              </div>
-              <h3 className="font-semibold text-foreground text-base mt-2">{cmp.name}</h3>
+      {isLoading ? (
+        <div className="glass-panel p-12 rounded-2xl border border-white/10 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Megaphone className="w-6 h-6 animate-pulse" />
+          </div>
+          <h3 className="text-lg font-bold text-foreground">Loading Outreach Campaigns...</h3>
+        </div>
+      ) : campaigns.length === 0 ? (
+        <div className="glass-panel p-12 rounded-2xl border border-white/10 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+            <Megaphone className="w-6 h-6" />
+          </div>
+          <h3 className="text-lg font-bold text-foreground">No Campaigns Configured</h3>
+          <p className="text-xs text-muted-foreground">Click "Launch New Campaign" to create one.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {campaigns.map((cmp) => (
+            <Card key={cmp.id} glass className="space-y-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-start justify-between">
+                  <StatusBadge status={cmp.status} />
+                  <span className="text-xs text-muted-foreground">{cmp.schedule}</span>
+                </div>
+                <h3 className="font-semibold text-foreground text-base mt-2">{cmp.name}</h3>
 
-              <div className="grid grid-cols-3 gap-2 my-4 text-center">
-                <div className="p-2 rounded-lg bg-card/60 border border-border">
-                  <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
-                    <Eye className="w-3 h-3 text-indigo-400" /> Open Rate
+                <div className="grid grid-cols-3 gap-2 my-4 text-center">
+                  <div className="p-2 rounded-lg bg-card/60 border border-border">
+                    <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
+                      <Eye className="w-3 h-3 text-indigo-400" /> Open Rate
+                    </div>
+                    <div className="text-sm font-bold text-indigo-400 font-mono mt-0.5">{cmp.openRate}%</div>
                   </div>
-                  <div className="text-sm font-bold text-indigo-400 font-mono mt-0.5">{cmp.openRate}%</div>
-                </div>
-                <div className="p-2 rounded-lg bg-card/60 border border-border">
-                  <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
-                    <MousePointer className="w-3 h-3 text-cyan-400" /> Click Rate
+                  <div className="p-2 rounded-lg bg-card/60 border border-border">
+                    <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
+                      <MousePointer className="w-3 h-3 text-cyan-400" /> Click Rate
+                    </div>
+                    <div className="text-sm font-bold text-cyan-400 font-mono mt-0.5">{cmp.clickRate}%</div>
                   </div>
-                  <div className="text-sm font-bold text-cyan-400 font-mono mt-0.5">{cmp.clickRate}%</div>
-                </div>
-                <div className="p-2 rounded-lg bg-card/60 border border-border">
-                  <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
-                    <Reply className="w-3 h-3 text-emerald-400" /> Reply Rate
+                  <div className="p-2 rounded-lg bg-card/60 border border-border">
+                    <div className="text-[10px] text-muted-foreground flex items-center justify-center gap-1">
+                      <Reply className="w-3 h-3 text-emerald-400" /> Reply Rate
+                    </div>
+                    <div className="text-sm font-bold text-emerald-400 font-mono mt-0.5">{cmp.replyRate}%</div>
                   </div>
-                  <div className="text-sm font-bold text-emerald-400 font-mono mt-0.5">{cmp.replyRate}%</div>
                 </div>
               </div>
-            </div>
 
-            <Button variant="outline" className="w-full text-xs" onClick={() => toggleCampaignStatus(cmp.id)}>
-              {cmp.status === "Active" ? "Pause Campaign" : "Resume Campaign"}
-            </Button>
-          </Card>
-        ))}
-      </div>
+              <Button variant="outline" className="w-full text-xs" onClick={() => toggleCampaignStatus(cmp.id)}>
+                {cmp.status === "Active" ? "Pause Campaign" : "Resume Campaign"}
+              </Button>
+            </Card>
+          ))}
+        </div>
+      )}
     </DashboardLayout>
   );
 }

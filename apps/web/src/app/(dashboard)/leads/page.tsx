@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -12,11 +12,15 @@ import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone
 import Link from "next/link";
 
 export default function LeadsPage() {
-  const { leads, searchQuery, setSearchQuery, selectedStatus, setSelectedStatus } = useLeadStore();
+  const { leads, searchQuery, setSearchQuery, selectedStatus, setSelectedStatus, fetchLeads, isLoading } = useLeadStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newLeadName, setNewLeadName] = useState("");
   const [newLeadCompany, setNewLeadCompany] = useState("");
   const [newLeadEmail, setNewLeadEmail] = useState("");
+
+  useEffect(() => {
+    fetchLeads();
+  }, [fetchLeads]);
 
   const filteredLeads = leads.filter((lead) => {
     const matchesQuery =
@@ -93,7 +97,18 @@ export default function LeadsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
-              {filteredLeads.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="py-12 text-center">
+                    <div className="max-w-sm mx-auto space-y-3">
+                      <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+                        <Users className="w-5 h-5 animate-pulse" />
+                      </div>
+                      <h4 className="font-bold text-foreground text-sm">Loading Leads from Database...</h4>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredLeads.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center">
                     <div className="max-w-sm mx-auto space-y-3">

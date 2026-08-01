@@ -1,7 +1,7 @@
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
-import { mockLeads, mockCompanies, mockAgents, mockWorkflows, mockCampaigns, mockDeals, mockAnalyticsData } from "@/lib/mockData";
-import { Lead, Company, AgentStatus, Workflow, Campaign, Deal } from "@/types";
+import { mockLeads, mockCompanies, mockAgents, mockWorkflows, mockCampaigns, mockDeals, mockAnalyticsData, mockContacts } from "@/lib/mockData";
+import { Lead, Company, AgentStatus, Workflow, Campaign, Deal, Contact } from "@/types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 
@@ -296,4 +296,77 @@ export const companyApi = {
       return mockCompanies;
     }
   },
+};
+
+export const workflowApi = {
+  getWorkflows: async (): Promise<Workflow[]> => {
+    try {
+      const { data, error } = await supabase.from("workflows").select("*");
+      if (error || !data || data.length === 0) return mockWorkflows;
+      return data.map((w: any) => ({
+        id: w.id,
+        name: w.name,
+        description: w.description || "Autonomous AI Lead Generation Workflow",
+        status: w.status === "active" ? "active" : w.status === "paused" ? "paused" : "draft",
+        triggersCount: w.triggers_count || 1,
+        totalRuns: w.total_runs || 0,
+        successRate: Number(w.success_rate) || 100.0,
+        lastRun: w.last_run || "Never",
+        nodes: [
+          { id: "node-1", type: "trigger", label: "Search Trigger", description: "Query matches ICP criteria", iconName: "Search" },
+          { id: "node-2", type: "agent", label: "Crawler Agent", description: "Playwright HTML DOM scraper", iconName: "Bot" },
+          { id: "node-3", type: "agent", label: "Verifier Agent", description: "SMTP handshake verifier", iconName: "Bot" },
+          { id: "node-4", type: "action", label: "CRM Sync", description: "Push qualified leads to DB/HubSpot", iconName: "CheckCircle2" }
+        ]
+      }));
+    } catch {
+      return mockWorkflows;
+    }
+  }
+};
+
+export const campaignApi = {
+  getCampaigns: async (): Promise<Campaign[]> => {
+    try {
+      const { data, error } = await supabase.from("campaigns").select("*");
+      if (error || !data || data.length === 0) return mockCampaigns;
+      return data.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        status: c.status || "Draft",
+        totalLeads: c.total_leads || 0,
+        sentCount: c.sent_count || 0,
+        openRate: Number(c.open_rate) || 0.0,
+        clickRate: Number(c.click_rate) || 0.0,
+        replyRate: Number(c.reply_rate) || 0.0,
+        schedule: c.schedule || "Manual",
+        createdAt: c.created_at || new Date().toISOString(),
+      }));
+    } catch {
+      return mockCampaigns;
+    }
+  }
+};
+
+export const contactApi = {
+  getContacts: async (): Promise<Contact[]> => {
+    try {
+      const { data, error } = await supabase.from("contacts").select("*");
+      if (error || !data || data.length === 0) return mockContacts;
+      return data.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        title: c.title || "Decision Maker",
+        companyId: c.company_id || "",
+        companyName: c.company_name || "Unknown Company",
+        email: c.email,
+        phone: c.phone || "+1 (555) 000-0000",
+        linkedin: c.linkedin || "",
+        status: c.status || "Verified",
+        lastContacted: c.last_contacted || "Never",
+      }));
+    } catch {
+      return mockContacts;
+    }
+  }
 };

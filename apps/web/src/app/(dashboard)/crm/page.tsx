@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -12,7 +12,11 @@ import { Deal } from "@/types";
 const STAGES: Deal["stage"][] = ["New", "Qualified", "Proposal", "Negotiation", "Closed Won"];
 
 export default function CRMPage() {
-  const { deals, updateDealStage } = useCRMStore();
+  const { deals, updateDealStage, fetchDeals, isLoading } = useCRMStore();
+
+  useEffect(() => {
+    fetchDeals();
+  }, [fetchDeals]);
 
   return (
     <DashboardLayout>
@@ -29,55 +33,64 @@ export default function CRMPage() {
       </div>
 
       {/* Kanban Board Columns */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto pb-4">
-        {STAGES.map((stage) => {
-          const stageDeals = deals.filter((d) => d.stage === stage);
-          const totalValue = stageDeals.reduce((sum, d) => sum + d.value, 0);
+      {isLoading ? (
+        <div className="glass-panel p-12 rounded-2xl border border-white/10 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Kanban className="w-6 h-6 animate-pulse" />
+          </div>
+          <h3 className="text-lg font-bold text-foreground">Loading CRM Deal Pipeline...</h3>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 overflow-x-auto pb-4">
+          {STAGES.map((stage) => {
+            const stageDeals = deals.filter((d) => d.stage === stage);
+            const totalValue = stageDeals.reduce((sum, d) => sum + d.value, 0);
 
-          return (
-            <div key={stage} className="glass-panel p-4 rounded-xl border border-white/10 flex flex-col h-full min-w-[240px]">
-              <div className="flex items-center justify-between border-b border-border pb-3 mb-3">
-                <span className="font-semibold text-foreground text-xs uppercase tracking-wider">{stage}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-bold">
-                  {stageDeals.length}
-                </span>
-              </div>
+            return (
+              <div key={stage} className="glass-panel p-4 rounded-xl border border-white/10 flex flex-col h-full min-w-[240px]">
+                <div className="flex items-center justify-between border-b border-border pb-3 mb-3">
+                  <span className="font-semibold text-foreground text-xs uppercase tracking-wider">{stage}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-bold">
+                    {stageDeals.length}
+                  </span>
+                </div>
 
-              <div className="text-xs font-bold text-emerald-400 mb-3">{formatCurrency(totalValue)}</div>
+                <div className="text-xs font-bold text-emerald-400 mb-3">{formatCurrency(totalValue)}</div>
 
-              <div className="space-y-3 flex-1 overflow-y-auto min-h-[300px]">
-                {stageDeals.map((deal) => (
-                  <div
-                    key={deal.id}
-                    className="p-3.5 rounded-xl bg-card/60 border border-border hover:border-primary/40 transition-all shadow-sm space-y-2 cursor-grab"
-                  >
-                    <h4 className="font-semibold text-foreground text-xs">{deal.title}</h4>
-                    <div className="text-[11px] text-muted-foreground">{deal.company}</div>
+                <div className="space-y-3 flex-1 overflow-y-auto min-h-[300px]">
+                  {stageDeals.map((deal) => (
+                    <div
+                      key={deal.id}
+                      className="p-3.5 rounded-xl bg-card/60 border border-border hover:border-primary/40 transition-all shadow-sm space-y-2 cursor-grab"
+                    >
+                      <h4 className="font-semibold text-foreground text-xs">{deal.title}</h4>
+                      <div className="text-[11px] text-muted-foreground">{deal.company}</div>
 
-                    <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px]">
-                      <span className="font-bold text-foreground font-mono">{formatCurrency(deal.value)}</span>
-                      <span className="text-indigo-400 font-semibold">{deal.probability}% Win</span>
+                      <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px]">
+                        <span className="font-bold text-foreground font-mono">{formatCurrency(deal.value)}</span>
+                        <span className="text-indigo-400 font-semibold">{deal.probability}% Win</span>
+                      </div>
+
+                      {/* Stage Quick Switcher */}
+                      <div className="pt-2 flex gap-1 justify-end">
+                        {STAGES.filter((s) => s !== stage).slice(0, 2).map((nextStage) => (
+                          <button
+                            key={nextStage}
+                            onClick={() => updateDealStage(deal.id, nextStage)}
+                            className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground hover:bg-primary hover:text-white transition-colors"
+                          >
+                            → {nextStage}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-
-                    {/* Stage Quick Switcher */}
-                    <div className="pt-2 flex gap-1 justify-end">
-                      {STAGES.filter((s) => s !== stage).slice(0, 2).map((nextStage) => (
-                        <button
-                          key={nextStage}
-                          onClick={() => updateDealStage(deal.id, nextStage)}
-                          className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground hover:bg-primary hover:text-white transition-colors"
-                        >
-                          → {nextStage}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </DashboardLayout>
   );
 }
