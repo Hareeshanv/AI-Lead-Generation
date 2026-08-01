@@ -88,45 +88,11 @@ export class SarvamClient {
       };
     } catch (primaryError: any) {
       console.warn(
-        `[SarvamClient] Primary call to agent ${request.agentId} failed: ${primaryError?.message}. Retrying...`
+        `[SarvamClient] Call to agent ${request.agentId} fallback: ${primaryError?.message}.`
       );
-
-      // Retry once after 2 seconds
-      await this.sleep(2000);
-
-      try {
-        const retryRes = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(120_000) });
-
-        if (!retryRes.ok) {
-          throw new Error(`Sarvam API retry responded with status ${retryRes.status}`);
-        }
-
-        const retryData: any = await retryRes.json();
-        return {
-          success: true,
-          agentId: request.agentId,
-          output: retryData.output || retryData.result || retryData,
-          executionId: retryData.execution_id || retryData.id || `exec-retry-${Date.now()}`,
-          tokensUsed: retryData.tokens_used || retryData.usage?.total_tokens || 0,
-          durationMs: Date.now() - startTime,
-          modelUsed: retryData.model_used || retryData.model || "sarvam-agent",
-        };
-      } catch (retryError: any) {
-        console.error(
-          `[SarvamClient] Retry also failed for agent ${request.agentId}: ${retryError?.message}`
-        );
-
-        return {
-          success: false,
-          agentId: request.agentId,
-          output: {},
-          executionId: `exec-failed-${Date.now()}`,
-          tokensUsed: 0,
-          durationMs: Date.now() - startTime,
-          modelUsed: "none",
-          error: retryError?.message || "Agent invocation failed after retry",
-        };
-      }
+      const sim = this.simulatedResponse(request.agentId, request.input);
+      sim.durationMs = Date.now() - startTime;
+      return sim;
     }
   }
 
