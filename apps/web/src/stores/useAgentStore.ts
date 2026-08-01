@@ -57,13 +57,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   triggerAgent: async (id, query = "Enterprise AI prospects") => {
     const timestamp = new Date().toLocaleTimeString();
-
-    const startLog = {
-      timestamp,
-      level: "info" as const,
-      message: `[Live Run Triggered]: Search & analysis started for query "${query}"`,
-    };
-
+    
+    // Update local state immediately for UI responsiveness
     set((state) => {
       const updatedAgents = state.agents.map((agt) =>
         agt.id === id
@@ -71,145 +66,173 @@ export const useAgentStore = create<AgentState>((set, get) => ({
               ...agt,
               status: "running" as const,
               runningJobs: agt.runningJobs + 1,
-              logs: [startLog, ...agt.logs],
+              logs: [
+                {
+                  timestamp,
+                  level: "info" as const,
+                  message: `[Live Run Triggered]: Pipeline started for query "${query}"`,
+                },
+                ...agt.logs,
+              ],
             }
           : agt
       );
-      const updatedSelected =
-        state.selectedAgent?.id === id
-          ? {
-              ...state.selectedAgent,
-              status: "running" as const,
-              runningJobs: state.selectedAgent.runningJobs + 1,
-              logs: [startLog, ...state.selectedAgent.logs],
-            }
-          : state.selectedAgent;
-
+      const updatedSelected = updatedAgents.find((a) => a.id === state.selectedAgent?.id) || state.selectedAgent;
       return {
         agents: updatedAgents,
         selectedAgent: updatedSelected,
-        activeAgentLogs: [startLog, ...state.activeAgentLogs],
+        activeAgentLogs: [
+          {
+            timestamp,
+            level: "info" as const,
+            message: `[Live Run Triggered]: Pipeline started for query "${query}"`,
+          },
+          ...state.activeAgentLogs,
+        ],
       };
     });
 
-    const result = await agentApi.triggerAgent(id, query);
+    // Trigger backend API and handle response
+    try {
+      const result = await agentApi.triggerAgent(id, query);
+      const doneTimestamp = new Date().toLocaleTimeString();
 
-    const completionLog = {
-      timestamp: new Date().toLocaleTimeString(),
-      level: result.success !== false ? ("info" as const) : ("error" as const),
-      message:
-        result.success !== false
-          ? `[Execution Completed]: Discovered ${result.totalLeadsFound || result.processedCount || 3} leads in ${result.durationMs || 220}ms`
-          : `[Execution Failed]: ${result.error || "Execution error"}`,
-    };
+      const resultLogs: { timestamp: string; level: "info" | "warn" | "error"; message: string }[] = [
+        {
+          timestamp: doneTimestamp,
+          level: "info",
+          message: `[Pipeline Complete] ✅ ${result.totalLeadsFound || 0} leads found, ${result.verifiedLeads || 0} verified, ${result.highScoreLeads || 0} high-score`,
+        },
+        {
+          timestamp: doneTimestamp,
+          level: "info",
+          message: `[Pipeline Stats] 📧 ${result.emailsGenerated || 0} emails generated | ⏱ ${result.durationMs || 0}ms | CRM synced: ${result.crmSynced || 0}`,
+        },
+      ];
 
-    set((state) => {
-      const updatedAgents = state.agents.map((agt) =>
-        agt.id === id
-          ? {
-              ...agt,
-              status: "active" as const,
-              runningJobs: Math.max(0, agt.runningJobs - 1),
-              totalExecutions: agt.totalExecutions + 1,
-              logs: [completionLog, ...agt.logs],
-            }
-          : agt
-      );
-      const updatedSelected =
-        state.selectedAgent?.id === id
-          ? {
-              ...state.selectedAgent,
-              status: "active" as const,
-              runningJobs: Math.max(0, state.selectedAgent.runningJobs - 1),
-              totalExecutions: state.selectedAgent.totalExecutions + 1,
-              logs: [completionLog, ...state.selectedAgent.logs],
-            }
-          : state.selectedAgent;
+      // Add individual lead summaries (up to 5)
+      if (result.leads && result.leads.length > 0) {
+        result.leads.slice(0, 5).forEach((lead: any, i: number) => {
+          resultLogs.push({
+            timestamp: doneTimestamp,
+            level: "info",
+            message: `[Lead ${i + 1}] ${lead.name} — ${lead.title} @ ${lead.company} (Score: ${lead.score}, ${lead.status})`,
+          });
+        });
+      }
 
-      return {
-        agents: updatedAgents,
-        selectedAgent: updatedSelected,
-        activeAgentLogs: [completionLog, ...state.activeAgentLogs],
-      };
-    });
+      set((state) => {
+        const updatedAgents = state.agents.map((agt) =>
+          agt.id === id
+            ? {
+                ...agt,
+                status: "active" as const,
+                runningJobs: Math.max(0, agt.runningJobs - 1),
+                totalExecutions: agt.totalExecutions + 1,
+                logs: [...resultLogs, ...agt.logs],
+              }
+            : agt
+        );
+        const updatedSelected = updatedAgents.find((a) => a.id === state.selectedAgent?.id) || state.selectedAgent;
+        return {
+          agents: updatedAgents,
+          selectedAgent: updatedSelected,
+          activeAgentLogs: [...resultLogs, ...state.activeAgentLogs],
+        };
+      });
+    } catch (err: any) {
+      const errorTimestamp = new Date().toLocaleTimeString();
+      set((state) => {
+        const updatedAgents = state.agents.map((agt) =>
+          agt.id === id
+            ? {
+                ...agt,
+                status: "error" as const,
+                runningJobs: Math.max(0, agt.runningJobs - 1),
+                logs: [
+                  {
+                    timestamp: errorTimestamp,
+                    level: "error" as const,
+                    message: `[Pipeline Error] ❌ ${err?.message || "Unknown error occurred"}`,
+                  },
+                  ...agt.logs,
+                ],
+              }
+            : agt
+        );
+        const updatedSelected = updatedAgents.find((a) => a.id === state.selectedAgent?.id) || state.selectedAgent;
+        return {
+          agents: updatedAgents,
+          selectedAgent: updatedSelected,
+          activeAgentLogs: [
+            {
+              timestamp: errorTimestamp,
+              level: "error" as const,
+              message: `[Pipeline Error] ❌ ${err?.message || "Unknown error occurred"}`,
+            },
+            ...state.activeAgentLogs,
+          ],
+        };
+      });
+    }
   },
 
   triggerSingleAgent: async (id, input) => {
     const timestamp = new Date().toLocaleTimeString();
-
-    const triggerLog = {
-      timestamp,
-      level: "info" as const,
-      message: `[Sarvam AI] Triggered input: ${JSON.stringify(input).substring(0, 80)}`,
-    };
-
-    set((state) => {
-      const updatedAgents = state.agents.map((agt) =>
+    
+    set((state) => ({
+      agents: state.agents.map((agt) =>
         agt.id === id
           ? {
               ...agt,
-              status: "running" as const,
+              status: "running",
               runningJobs: agt.runningJobs + 1,
-              logs: [triggerLog, ...agt.logs],
+              logs: [
+                {
+                  timestamp,
+                  level: "info",
+                  message: `[Sarvam AI] Agent triggered with input: ${JSON.stringify(input).substring(0, 100)}`,
+                },
+                ...agt.logs,
+              ],
             }
           : agt
-      );
-      const updatedSelected =
-        state.selectedAgent?.id === id
-          ? {
-              ...state.selectedAgent,
-              status: "running" as const,
-              runningJobs: state.selectedAgent.runningJobs + 1,
-              logs: [triggerLog, ...state.selectedAgent.logs],
-            }
-          : state.selectedAgent;
-
-      return {
-        agents: updatedAgents,
-        selectedAgent: updatedSelected,
-        activeAgentLogs: [triggerLog, ...state.activeAgentLogs],
-      };
-    });
+      ),
+      activeAgentLogs: [
+        {
+          timestamp,
+          level: "info",
+          message: `[Sarvam AI] Agent ${id} triggered individually`,
+        },
+        ...get().activeAgentLogs,
+      ],
+    }));
 
     const result = await agentApi.triggerSingleAgent(id, input);
 
-    const endLog = {
-      timestamp: new Date().toLocaleTimeString(),
-      level: result.success ? ("info" as const) : ("error" as const),
-      message: result.success
-        ? `[Sarvam AI] Completed in ${result.duration_ms || 0}ms (${result.tokens_used || 0} tokens)`
-        : `[Sarvam AI] Error: ${result.error || "Unknown error"}`,
-    };
-
-    set((state) => {
-      const updatedAgents = state.agents.map((agt) =>
+    // Update with result
+    set((state) => ({
+      agents: state.agents.map((agt) =>
         agt.id === id
           ? {
               ...agt,
-              status: result.success ? ("active" as const) : ("error" as const),
+              status: result.success ? "active" : "error",
               runningJobs: Math.max(0, agt.runningJobs - 1),
               totalExecutions: agt.totalExecutions + 1,
-              logs: [endLog, ...agt.logs],
+              logs: [
+                {
+                  timestamp: new Date().toLocaleTimeString(),
+                  level: result.success ? "info" : "error",
+                  message: result.success
+                    ? `[Sarvam AI] Completed in ${result.duration_ms || 0}ms (${result.tokens_used || 0} tokens)`
+                    : `[Sarvam AI] Error: ${result.error || "Unknown error"}`,
+                },
+                ...agt.logs,
+              ],
             }
           : agt
-      );
-      const updatedSelected =
-        state.selectedAgent?.id === id
-          ? {
-              ...state.selectedAgent,
-              status: result.success ? ("active" as const) : ("error" as const),
-              runningJobs: Math.max(0, state.selectedAgent.runningJobs - 1),
-              totalExecutions: state.selectedAgent.totalExecutions + 1,
-              logs: [endLog, ...state.selectedAgent.logs],
-            }
-          : state.selectedAgent;
-
-      return {
-        agents: updatedAgents,
-        selectedAgent: updatedSelected,
-        activeAgentLogs: [endLog, ...state.activeAgentLogs],
-      };
-    });
+      ),
+    }));
   },
 
   fetchPipelineRuns: async () => {
@@ -234,41 +257,46 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     const timestamp = new Date().toLocaleTimeString();
 
-    const startPipelineLog = {
-      timestamp,
-      level: "info" as const,
-      message: `[Pipeline] Starting lead pipeline: "${params.query}" (${params.category || "B2B"})`,
-    };
-
+    // Add log entries for pipeline start
     set((state) => ({
-      activeAgentLogs: [startPipelineLog, ...state.activeAgentLogs],
+      activeAgentLogs: [
+        {
+          timestamp,
+          level: "info",
+          message: `[Pipeline] Starting full lead generation pipeline: "${params.query}" (${params.category || "B2B"})`,
+        },
+        ...state.activeAgentLogs,
+      ],
     }));
 
     try {
       const result = await agentApi.triggerAgent("agt-orchestrator", params.query);
 
-      const endPipelineLog = {
-        timestamp: new Date().toLocaleTimeString(),
-        level: "info" as const,
-        message: `[Pipeline] Completed! ${result.totalLeadsFound || result.processedCount || 0} leads processed in ${result.durationMs || 0}ms`,
-      };
-
       set((state) => ({
         isPipelineRunning: false,
-        activeAgentLogs: [endPipelineLog, ...state.activeAgentLogs],
+        activeAgentLogs: [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: "info",
+            message: `[Pipeline] Completed! ${result.totalLeadsFound || result.processedCount || 0} leads processed in ${result.durationMs || 0}ms`,
+          },
+          ...state.activeAgentLogs,
+        ],
       }));
 
+      // Refresh pipeline runs list
       get().fetchPipelineRuns();
     } catch (err: any) {
-      const errPipelineLog = {
-        timestamp: new Date().toLocaleTimeString(),
-        level: "error" as const,
-        message: `[Pipeline] Failed: ${err?.message || "Unknown error"}`,
-      };
-
       set((state) => ({
         isPipelineRunning: false,
-        activeAgentLogs: [errPipelineLog, ...state.activeAgentLogs],
+        activeAgentLogs: [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            level: "error",
+            message: `[Pipeline] Failed: ${err?.message || "Unknown error"}`,
+          },
+          ...state.activeAgentLogs,
+        ],
       }));
     }
   },
