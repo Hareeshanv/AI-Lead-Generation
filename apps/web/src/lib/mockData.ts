@@ -57,7 +57,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.2, concurrency: 5 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Planner Agent initialized and ready for new target inputs." },
+      { timestamp: "--:--:--", level: "info", message: "Planner Agent initialized and ready for new target inputs." },
     ],
   },
   {
@@ -73,7 +73,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o-mini", temperature: 0.4, concurrency: 12 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Search Discovery Agent ready for B2B/B2C query runs." },
+      { timestamp: "--:--:--", level: "info", message: "Search Discovery Agent ready for B2B/B2C query runs." },
     ],
   },
   {
@@ -89,7 +89,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "claude-3-5-sonnet", temperature: 0.1, concurrency: 10 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Web Scraper Agent standby mode active." },
+      { timestamp: "--:--:--", level: "info", message: "Web Scraper Agent standby mode active." },
     ],
   },
   {
@@ -105,7 +105,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "rule-engine-v1", temperature: 0.0, concurrency: 30 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Verifier Engine active. Ready to validate emails & phone numbers." },
+      { timestamp: "--:--:--", level: "info", message: "Verifier Engine active. Ready to validate emails & phone numbers." },
     ],
   },
   {
@@ -121,7 +121,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.1, concurrency: 15 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Lead Scorer Agent waiting for incoming data batches." },
+      { timestamp: "--:--:--", level: "info", message: "Lead Scorer Agent waiting for incoming data batches." },
     ],
   },
   {
@@ -137,7 +137,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.7, concurrency: 8 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Outreach Writer Agent standby mode active." },
+      { timestamp: "--:--:--", level: "info", message: "Outreach Writer Agent standby mode active." },
     ],
   },
   {
@@ -153,7 +153,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.1, concurrency: 8 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Data Extractor Agent initialized." },
+      { timestamp: "--:--:--", level: "info", message: "Data Extractor Agent initialized." },
     ],
   },
   {
@@ -169,7 +169,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o-mini", temperature: 0.3, concurrency: 15 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Enrichment Agent ready for data augmentation." },
+      { timestamp: "--:--:--", level: "info", message: "Enrichment Agent ready for data augmentation." },
     ],
   },
   {
@@ -185,7 +185,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "rule-engine-v1", temperature: 0.0, concurrency: 20 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Deduplication Engine online." },
+      { timestamp: "--:--:--", level: "info", message: "Deduplication Engine online." },
     ],
   },
   {
@@ -201,7 +201,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o-mini", temperature: 0.1, concurrency: 5 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "CRM Sync Agent awaiting qualified leads." },
+      { timestamp: "--:--:--", level: "info", message: "CRM Sync Agent awaiting qualified leads." },
     ],
   },
   {
@@ -217,7 +217,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.3, concurrency: 3 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Report Generator Agent on standby." },
+      { timestamp: "--:--:--", level: "info", message: "Report Generator Agent on standby." },
     ],
   },
   {
@@ -233,7 +233,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o-mini", temperature: 0.1, concurrency: 3 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Analytics Tracker actively monitoring system metrics." },
+      { timestamp: "--:--:--", level: "info", message: "Analytics Tracker actively monitoring system metrics." },
     ],
   },
   {
@@ -249,7 +249,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o-mini", temperature: 0.1, concurrency: 3 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Scheduler Agent managing automated task lifecycle." },
+      { timestamp: "--:--:--", level: "info", message: "Scheduler Agent managing automated task lifecycle." },
     ],
   },
   {
@@ -265,7 +265,7 @@ export const mockAgents: AgentStatus[] = [
     lastActive: "Ready",
     config: { model: "gpt-4o", temperature: 0.2, concurrency: 5 },
     logs: [
-      { timestamp: new Date().toLocaleTimeString(), level: "info", message: "Master Orchestrator ready to coordinate pipeline runs." },
+      { timestamp: "--:--:--", level: "info", message: "Master Orchestrator ready to coordinate pipeline runs." },
     ],
   },
 ];

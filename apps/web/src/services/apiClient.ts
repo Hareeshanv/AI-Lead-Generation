@@ -155,7 +155,7 @@ export const agentApi = {
             concurrency: agt.concurrency || 10,
           },
           logs: [
-            { timestamp: new Date().toLocaleTimeString(), level: "info" as const, message: `Agent ${agt.name} status: ${agt.sarvam_configured ? "Connected to Sarvam AI" : "Running locally"}` },
+            { timestamp: "--:--:--", level: "info" as const, message: `Agent ${agt.name} status: ${agt.sarvam_configured ? "Connected to Sarvam AI" : "Running locally"}` },
           ],
         }));
       }
@@ -183,7 +183,7 @@ export const agentApi = {
           concurrency: agt.concurrency || 10,
         },
         logs: [
-          { timestamp: new Date().toLocaleTimeString(), level: "info" as const, message: `Agent ${agt.name} live in Supabase telemetry` },
+          { timestamp: "--:--:--", level: "info" as const, message: `Agent ${agt.name} live in Supabase telemetry` },
         ],
       }));
     } catch {
