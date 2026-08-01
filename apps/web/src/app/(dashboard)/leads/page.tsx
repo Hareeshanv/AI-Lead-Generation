@@ -92,7 +92,7 @@ export default function LeadsPage() {
                 <th className="py-3.5 px-4">ICP Score</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4">Source</th>
-                <th className="py-3.5 px-4">Owner</th>
+                <th className="py-3.5 px-4">Contact Info</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -153,7 +153,10 @@ export default function LeadsPage() {
                       <StatusBadge status={lead.status} />
                     </td>
                     <td className="py-3.5 px-4 text-xs text-muted-foreground">{lead.source}</td>
-                    <td className="py-3.5 px-4 text-xs text-foreground font-medium">{lead.owner}</td>
+                    <td className="py-3.5 px-4 text-xs">
+                      <div className="text-indigo-400 font-mono font-semibold">{lead.email}</div>
+                      <div className="text-muted-foreground mt-0.5">{lead.phone || "—"}</div>
+                    </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Link href={`/leads/${lead.id}`}>
