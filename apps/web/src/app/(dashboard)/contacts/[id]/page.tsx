@@ -1,18 +1,48 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { mockContacts } from "@/lib/mockData";
-import { ArrowLeft, Mail, Phone, Linkedin } from "lucide-react";
+import { contactApi } from "@/services/apiClient";
+import { ArrowLeft, Mail, Phone, Linkedin, Users } from "lucide-react";
 import Link from "next/link";
 
 export default function ContactDetailPage() {
   const params = useParams();
-  const contact = mockContacts[0];
+  const contactId = params?.id as string;
+  const [contact, setContact] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchContact = async () => {
+      try {
+        const contacts = await contactApi.getContacts();
+        const found = contacts.find((c) => c.id === contactId) || contacts[0];
+        setContact(found);
+      } catch (err) {
+        console.error("Failed to load contact detail:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchContact();
+  }, [contactId]);
+
+  if (isLoading || !contact) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Users className="w-6 h-6 animate-pulse" />
+          </div>
+          <h2 className="text-lg font-bold text-foreground">Loading Contact Details...</h2>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

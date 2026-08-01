@@ -1,20 +1,48 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { mockCompanies, mockLeads } from "@/lib/mockData";
+import { companyApi } from "@/services/apiClient";
 import { ArrowLeft, Globe, MapPin, Building2, Users, DollarSign, ExternalLink, Linkedin, Twitter } from "lucide-react";
 import Link from "next/link";
 
 export default function CompanyDetailPage() {
   const params = useParams();
   const companyId = params?.id as string;
-  const company = mockCompanies.find((c) => c.id === companyId) || mockCompanies[0];
-  const companyLeads = mockLeads.filter((l) => l.company.toLowerCase().includes(company.name.toLowerCase().split(" ")[0]));
+  const [company, setCompany] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCompany = async () => {
+      try {
+        const companies = await companyApi.getCompanies();
+        const found = companies.find((c) => c.id === companyId) || companies[0];
+        setCompany(found);
+      } catch (err) {
+        console.error("Failed to load company detail:", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchCompany();
+  }, [companyId]);
+
+  if (isLoading || !company) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Building2 className="w-6 h-6 animate-pulse" />
+          </div>
+          <h2 className="text-lg font-bold text-foreground">Loading Company Details...</h2>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -79,7 +107,7 @@ export default function CompanyDetailPage() {
         <Card glass className="lg:col-span-2 space-y-4">
           <h2 className="text-base font-semibold text-foreground">Full Tech Stack Intelligence</h2>
           <div className="flex flex-wrap gap-2">
-            {company.techStack.map((tech) => (
+            {company.techStack?.map((tech: string) => (
               <Badge key={tech} variant="indigo" className="text-sm py-1 px-3">
                 {tech}
               </Badge>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
-import { mockLeads } from "@/lib/mockData";
+import { useLeadStore } from "@/stores/useLeadStore";
 import {
   ArrowLeft,
   Mail,
@@ -29,13 +29,32 @@ import Link from "next/link";
 export default function LeadDetailPage() {
   const params = useParams();
   const leadId = params?.id as string;
-  const lead = mockLeads.find((l) => l.id === leadId) || mockLeads[0];
+  const { leads, fetchLeads } = useLeadStore();
+
+  useEffect(() => {
+    fetchLeads();
+  }, [fetchLeads]);
+
+  const lead = leads.find((l) => l.id === leadId);
 
   const [notes, setNotes] = useState([
     "Lead has expressed high interest in AI enrichment pipelines.",
     "Budget approved for Q3 rollout.",
   ]);
   const [newNote, setNewNote] = useState("");
+
+  if (!lead) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto animate-spin">
+            <Users className="w-6 h-6 animate-pulse" />
+          </div>
+          <h2 className="text-lg font-bold text-foreground">Loading Lead Details...</h2>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
