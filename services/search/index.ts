@@ -14,9 +14,39 @@ export interface DiscoveredLeadSearchResult {
   confidenceScore: number;
 }
 
+function extractDomain(urlStr: string): string {
+  try {
+    // If it's a relative URL or redirect URL, extract the query param target
+    let targetUrl = urlStr;
+    if (urlStr.includes("uddg=")) {
+      const parts = urlStr.split("uddg=");
+      if (parts[1]) {
+        targetUrl = decodeURIComponent(parts[1].split("&")[0]);
+      }
+    }
+    const parsed = new URL(targetUrl);
+    let host = parsed.hostname;
+    if (host.startsWith("www.")) {
+      host = host.substring(4);
+    }
+    return host;
+  } catch {
+    return "";
+  }
+}
+
 export class SearchProviderService {
   async discoverLeads(params: SearchQuery): Promise<DiscoveredLeadSearchResult[]> {
-    const searchQuery = `${params.query} ${params.location || ""} ${params.industry || ""} LinkedIn profile`.trim();
+    let searchQuery = params.query;
+    if (params.location) searchQuery += ` ${params.location}`;
+    if (params.industry) searchQuery += ` ${params.industry}`;
+
+    // Only force LinkedIn if user is searching for people. If they search for contact lists/companies, don't append it
+    const isContactOrCompanySearch = /contact|email|phone|website|academyhunt|address|coaching|company/i.test(params.query);
+    if (!isContactOrCompanySearch) {
+      searchQuery += " LinkedIn profile";
+    }
+
     console.log(`[Search Service] Performing LIVE web search: "${searchQuery}"`);
 
     try {
@@ -31,24 +61,32 @@ export class SearchProviderService {
 
       const html = await response.text();
 
-      const linkRegex = /<a[^>]+class=["']result-link["'][^>]*>([\s\S]*?)<\/a>/gi;
+      // Matches anchors with class "result-link" capturing href and content
+      const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*class=["']result-link["'][^>]*>([\s\S]*?)<\/a>|<a[^>]+class=["']result-link["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
       const snippetRegex = /<td[^>]+class=["']result-snippet["'][^>]*>([\s\S]*?)<\/td>/gi;
 
       const titles: string[] = [];
+      const urls: string[] = [];
       const snippets: string[] = [];
 
       let match: RegExpExecArray | null;
       while ((match = linkRegex.exec(html)) !== null) {
-        titles.push(match[1].replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
+        const url = match[1] || match[3] || "";
+        const title = match[2] || match[4] || "";
+        urls.push(url.trim());
+        titles.push(title.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
       }
-      while ((match = snippetRegex.exec(html)) !== null) {
-        snippets.push(match[1].replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
+
+      let snippetMatch: RegExpExecArray | null;
+      while ((snippetMatch = snippetRegex.exec(html)) !== null) {
+        snippets.push(snippetMatch[1].replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
       }
 
       const liveLeads: DiscoveredLeadSearchResult[] = [];
 
       for (let i = 0; i < titles.length; i++) {
         const rawTitle = titles[i];
+        const rawUrl = urls[i] || "";
         const rawSnippet = snippets[i] || "";
 
         const parts = rawTitle.split(/[-|–]/);
@@ -58,7 +96,14 @@ export class SearchProviderService {
           const company = parts[2] ? parts[2].replace(/LinkedIn.*$/i, "").trim() : `${params.industry || "Tech"} Solutions`;
 
           if (name.length > 2 && !name.toLowerCase().includes("top") && !name.toLowerCase().includes("meet")) {
-            const domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
+            let domain = "";
+            if (rawUrl) {
+              domain = extractDomain(rawUrl);
+            }
+            if (!domain || domain.includes("linkedin.com") || domain.includes("duckduckgo.com")) {
+              domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
+            }
+
             liveLeads.push({
               name,
               title: title.length > 35 ? title.substring(0, 35) : title,
