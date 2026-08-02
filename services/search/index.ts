@@ -44,7 +44,7 @@ export class SearchProviderService {
     // Only force LinkedIn if user is searching for people. If they search for contact lists/companies, don't append it
     const isContactOrCompanySearch = /contact|email|phone|website|academyhunt|address|coaching|company/i.test(params.query);
     if (!isContactOrCompanySearch) {
-      searchQuery += " LinkedIn profile";
+      searchQuery += " site:linkedin.com/in";
     }
 
     console.log(`[Search Service] Performing LIVE web search: "${searchQuery}"`);
@@ -84,52 +84,76 @@ export class SearchProviderService {
 
       const liveLeads: DiscoveredLeadSearchResult[] = [];
 
+      // Job board / directory domains that never contain person profiles
+      const jobBoardDomains = ["internshala.com", "naukri.com", "indeed.com", "glassdoor.com", "simplyhired.com", "monster.com", "shine.com", "foundit.in", "timesjobs.com", "freshersworld.com", "apna.co"];
+
       for (let i = 0; i < titles.length; i++) {
         const rawTitle = titles[i];
         const rawUrl = urls[i] || "";
         const rawSnippet = snippets[i] || "";
 
+        // Skip results from job board domains entirely
+        const resultDomain = extractDomain(rawUrl);
+        const isJobBoardDomain = jobBoardDomains.some(jb => resultDomain.includes(jb));
+        if (isJobBoardDomain) {
+          continue;
+        }
+
         // Split title by en-dash, em-dash, hyphen, pipe, or colon
         const parts = rawTitle.split(/\s*[-–—|:]\s*/);
         if (parts.length >= 1) {
           let name = parts[0].trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim();
-          let title = parts[1] ? parts[1].trim() : "Coaching & Training Provider";
+          let title = parts[1] ? parts[1].trim() : "Professional";
           let company = parts[2] ? parts[2].replace(/LinkedIn.*$/i, "").trim() : "";
 
-          if (name.length > 2 && !name.toLowerCase().includes("top") && !name.toLowerCase().includes("meet")) {
-            let domain = "";
-            if (rawUrl) {
-              domain = extractDomain(rawUrl);
-            }
-            if (!domain || domain.includes("linkedin.com") || domain.includes("duckduckgo.com")) {
-              domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
-            }
+          // ── Determine if this is a real person vs. a topic/listing ──
 
-            // Extract company name from domain if it's a company website
-            const rawCompanyFromDomain = domain.split(".")[0];
-            const cleanCompanyFromDomain = rawCompanyFromDomain ? rawCompanyFromDomain.charAt(0).toUpperCase() + rawCompanyFromDomain.slice(1) : "";
+          const isLinkedInProfile = rawUrl.includes("linkedin.com/in/") || rawUrl.includes("linkedin.com/pub/");
+          const isGitHubProfile = rawUrl.includes("github.com/") && !rawUrl.includes("github.com/topics") && !rawUrl.includes("github.com/search");
+          const isPersonProfileUrl = isLinkedInProfile || isGitHubProfile;
 
-            // Detect if the search hit is a generic coaching/directory topic instead of a person profile
-            const isTopic = /best|top|list|coaching|training|academy|school|course|services|system|solutions|database|mentors/i.test(name) || !rawUrl.includes("linkedin.com/in/");
+          // Name-based filters: these patterns are NEVER a person's name
+          const startsWithNumber = /^\d/.test(name);
+          const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an )/i.test(name);
+          const hasJobKeywords = /\b(jobs?\s+in|internship|fresher|hiring|vacancy|vacanc|openings?|career|recruitment|apply|placement)\b/i.test(name);
+          const isSingleWordLocation = /^[A-Z][a-z]+$/.test(name) && name.length < 15 && /^(bangalore|bengaluru|mumbai|delhi|chennai|hyderabad|pune|kolkata|india|usa|london|new york)$/i.test(name);
+          const isTooLong = name.length > 60; // Article titles are usually very long
+          const hasNumericCount = /^\d+\+?\s/.test(name); // "364+ Computer Science..." or "24 Computer Science..."
 
-            if (isTopic) {
-              // For directories/companies, represent them as corporate contacts rather than people
-              company = company || cleanCompanyFromDomain || "Educational Center";
-              name = `${company} Contact`;
-              title = "Admissions & Support Office";
-            } else {
-              company = company || cleanCompanyFromDomain || "Independent";
-            }
+          const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount;
 
-            liveLeads.push({
-              name,
-              title: title.length > 45 ? title.substring(0, 45) : title,
-              company: company,
-              domain,
-              snippet: rawSnippet.substring(0, 150),
-              confidenceScore: 85 + Math.floor(Math.random() * 10),
-            });
+          // Skip if name is definitely not a person (unless it's a confirmed LinkedIn/GitHub profile URL)
+          if (isDefinitelyNotPerson && !isPersonProfileUrl) {
+            continue;
           }
+
+          // Basic name validity: must be > 2 chars
+          if (name.length <= 2) continue;
+
+          let domain = "";
+          if (rawUrl) {
+            domain = extractDomain(rawUrl);
+          }
+          if (!domain || domain.includes("linkedin.com") || domain.includes("duckduckgo.com") || domain.includes("github.com")) {
+            domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
+          }
+
+          // Extract company name from domain if it's a company website
+          const rawCompanyFromDomain = domain.split(".")[0];
+          const cleanCompanyFromDomain = rawCompanyFromDomain ? rawCompanyFromDomain.charAt(0).toUpperCase() + rawCompanyFromDomain.slice(1) : "";
+
+          company = company || cleanCompanyFromDomain || "Independent";
+          // Clean up LinkedIn-style suffixes from the name
+          name = name.replace(/\s*[-–—]\s*LinkedIn\s*$/i, "").trim();
+
+          liveLeads.push({
+            name,
+            title: title.length > 45 ? title.substring(0, 45) : title,
+            company: company,
+            domain,
+            snippet: rawSnippet.substring(0, 150),
+            confidenceScore: 85 + Math.floor(Math.random() * 10),
+          });
         }
       }
 

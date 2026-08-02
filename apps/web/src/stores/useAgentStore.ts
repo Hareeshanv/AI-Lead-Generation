@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { AgentStatus } from "@/types";
 import { mockAgents } from "@/lib/mockData";
 import { agentApi } from "@/services/apiClient";
+import { useLeadStore } from "@/stores/useLeadStore";
 
 interface PipelineRun {
   id: string;
@@ -140,6 +141,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           activeAgentLogs: [...resultLogs, ...state.activeAgentLogs],
         };
       });
+
+      // Auto-refresh the leads table so new leads appear immediately
+      try {
+        await useLeadStore.getState().fetchLeads();
+      } catch { /* leads refresh is best-effort */ }
     } catch (err: any) {
       const errorTimestamp = new Date().toLocaleTimeString();
       set((state) => {
@@ -283,6 +289,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           ...state.activeAgentLogs,
         ],
       }));
+
+      // Auto-refresh the leads table so new leads appear immediately
+      try {
+        await useLeadStore.getState().fetchLeads();
+      } catch { /* leads refresh is best-effort */ }
 
       // Refresh pipeline runs list
       get().fetchPipelineRuns();

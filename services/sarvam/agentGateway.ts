@@ -233,9 +233,26 @@ class AgentGateway {
     };
 
     // Execute each agent in sequence
+    // Track if Sarvam API is actually reachable — if not, skip remaining agents
+    let sarvamApiReachable = true;
+
     for (const agentId of PIPELINE_SEQUENCE) {
       const agentName = AGENT_NAMES[agentId];
       const stepStartTime = Date.now();
+
+      // If Sarvam API is not reachable, skip all agents to save time
+      if (!sarvamApiReachable) {
+        steps.push({
+          agentId,
+          agentName,
+          status: "skipped",
+          output: {},
+          durationMs: 0,
+          tokensUsed: 0,
+        });
+        console.log(`[Pipeline] ○ ${agentName} skipped (Sarvam API not reachable)`);
+        continue;
+      }
 
       console.log(`[Pipeline] ▶ Running: ${agentName} (${agentId})`);
 
@@ -243,6 +260,26 @@ class AgentGateway {
         const response = await this.runAgent(agentId, previousOutput);
 
         if (response && response.success) {
+          // Detect if this was a simulated (fallback) response
+          if (response.output?.simulated === true) {
+            sarvamApiReachable = false;
+            console.log(`[Pipeline] ⚠ ${agentName} returned simulated response — Sarvam API not reachable. Skipping remaining agents.`);
+            steps.push({
+              agentId,
+              agentName,
+              status: "skipped",
+              output: response.output,
+              durationMs: response.durationMs,
+              tokensUsed: 0,
+            });
+            // Still store the output for downstream use
+            previousOutput = {
+              ...previousOutput,
+              [`${agentId.replace("agt-", "")}_result`]: response.output,
+            };
+            continue;
+          }
+
           const stepResult: PipelineStepResult = {
             agentId,
             agentName,
@@ -361,7 +398,16 @@ class AgentGateway {
 
     // Extract leads from Sarvam search agent if configured and completed
     const searchResult = previousOutput.search_result;
-    const sarvamLeads = searchResult?.leads_discovered || searchResult?.leads || searchResult?.results;
+    const isSimulated = searchResult?.simulated === true;
+
+    if (isSimulated) {
+      console.log("[AgentGateway] Search agent returned a simulated response (Sarvam API unavailable). Will use live web search fallback.");
+    }
+
+    const sarvamLeads = !isSimulated
+      ? (searchResult?.leads_discovered || searchResult?.leads || searchResult?.results)
+      : null;
+
     if (Array.isArray(sarvamLeads) && sarvamLeads.length > 0) {
       console.log(`[AgentGateway] Using ${sarvamLeads.length} leads discovered by Sarvam Search Agent.`);
       generatedLeads = sarvamLeads.map((l: any) => ({
@@ -393,6 +439,11 @@ class AgentGateway {
         profile_url_source: l.profile_url_source || null,
         industry_source: l.industry_source || null,
         source_channel: l.source_channel || null,
+        // Extra student/talent fields
+        skills: l.skills || null,
+        graduation: l.graduation || null,
+        intent_level: l.intent_level || null,
+        current_internship: l.current_internship || null,
       }));
     }
 

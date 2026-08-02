@@ -7,7 +7,7 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000,
+  timeout: 120000,
   headers: {
     "Content-Type": "application/json",
   },
@@ -18,7 +18,12 @@ export const leadApi = {
   getLeads: async (): Promise<Lead[]> => {
     try {
       const { data, error } = await supabase.from("leads").select("*").order("created_at", { ascending: false });
-      if (error || !data || data.length === 0) {
+      if (error) {
+        console.warn("[leadApi] Supabase query error:", error.message, "— falling back to local data");
+        return mockLeads;
+      }
+      if (!data || data.length === 0) {
+        console.log("[leadApi] No leads found in Supabase database. Returning empty list.");
         return mockLeads;
       }
       return data.map((d: any) => ({
@@ -44,7 +49,8 @@ export const leadApi = {
         notesCount: d.notes_count || 1,
         activityCount: d.activity_count || 3,
       }));
-    } catch {
+    } catch (err: any) {
+      console.warn("[leadApi] Failed to fetch leads from Supabase:", err?.message || "Unknown error");
       return mockLeads;
     }
   },

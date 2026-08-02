@@ -70,7 +70,7 @@ export class SarvamClient {
     };
 
     try {
-      const res = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(120_000) });
+      const res = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(8_000) });
 
       if (!res.ok) {
         throw new Error(`Sarvam API responded with status ${res.status}`);
@@ -126,16 +126,38 @@ export class SarvamClient {
   /**
    * Returns a simulated response when the API key is not configured.
    * This allows the app to work in development without a real Sarvam account.
+   * Returns agent-specific output shapes so downstream code handles them correctly.
    */
   private simulatedResponse(agentId: string, input: Record<string, any>): SarvamAgentResponse {
+    // Build agent-specific output so pipeline logic can detect "no leads" vs "malformed response"
+    let output: Record<string, any> = {
+      message: `[Simulated] Agent ${agentId} processed input successfully.`,
+      query: input.query || input.prompt || "N/A",
+      simulated: true,
+    };
+
+    // Agent-specific simulated outputs
+    if (agentId.includes("search") || agentId === "agt-search") {
+      output.leads_discovered = [];
+      output.total_discovered = 0;
+      output.channels_used = ["simulated"];
+    } else if (agentId.includes("verifier") || agentId === "agt-verifier") {
+      output.verified_count = 0;
+      output.total_verified = 0;
+    } else if (agentId.includes("scoring") || agentId === "agt-scoring") {
+      output.hot_leads = 0;
+      output.high_score_count = 0;
+    } else if (agentId.includes("outreach") || agentId === "agt-outreach") {
+      output.emails_generated = 0;
+      output.total_generated = 0;
+    } else if (agentId.includes("crm") || agentId === "agt-crm") {
+      output.successfully_synced = 0;
+    }
+
     return {
       success: true,
       agentId,
-      output: {
-        message: `[Simulated] Agent ${agentId} processed input successfully.`,
-        query: input.query || input.prompt || "N/A",
-        simulated: true,
-      },
+      output,
       executionId: `sim-${Date.now()}`,
       tokensUsed: 0,
       durationMs: 150,
