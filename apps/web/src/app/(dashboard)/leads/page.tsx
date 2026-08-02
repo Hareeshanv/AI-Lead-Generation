@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Modal } from "@/components/ui/Modal";
 import { useLeadStore } from "@/stores/useLeadStore";
-import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone, Users } from "lucide-react";
+import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone, Users, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
 export default function LeadsPage() {
@@ -144,8 +144,14 @@ export default function LeadsPage() {
                       <div className="text-xs text-muted-foreground">{lead.industry}</div>
                     </td>
                     <td className="py-3.5 px-4">
-                      <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 font-mono font-bold text-xs border border-indigo-500/20">
-                        <Flame className="w-3.5 h-3.5 text-rose-400" />
+                      <div className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-mono font-bold text-xs border ${
+                        lead.score >= 70
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          : lead.score >= 40
+                            ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                            : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                      }`}>
+                        <Flame className={`w-3.5 h-3.5 ${lead.score >= 70 ? "text-emerald-400" : lead.score >= 40 ? "text-amber-400" : "text-rose-400"}`} />
                         {lead.score}/100
                       </div>
                     </td>
@@ -154,8 +160,12 @@ export default function LeadsPage() {
                     </td>
                     <td className="py-3.5 px-4 text-xs text-muted-foreground">{lead.source}</td>
                     <td className="py-3.5 px-4 text-xs">
-                      <div className="text-indigo-400 font-mono font-semibold">{lead.email}</div>
-                      <div className="text-muted-foreground mt-0.5">{lead.phone || "—"}</div>
+                      <div className={`font-mono font-semibold ${lead.email && lead.email !== "Not available" ? "text-indigo-400" : "text-muted-foreground/50 italic"}`}>
+                        {lead.email && lead.email !== "Not available" ? lead.email : "—"}
+                      </div>
+                      <div className={`mt-0.5 ${lead.phone && lead.phone !== "Not available" ? "text-muted-foreground" : "text-muted-foreground/50 italic"}`}>
+                        {lead.phone && lead.phone !== "Not available" ? lead.phone : "—"}
+                      </div>
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -164,9 +174,19 @@ export default function LeadsPage() {
                             <Eye className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
                           </Button>
                         </Link>
-                        <Button variant="ghost" size="icon" aria-label="Send email">
+                        <Button variant="ghost" size="icon" aria-label="Send email"
+                          disabled={!lead.email || lead.email === "Not available"}
+                          className={!lead.email || lead.email === "Not available" ? "opacity-30" : ""}
+                        >
                           <Mail className="w-4 h-4 text-muted-foreground hover:text-indigo-400" />
                         </Button>
+                        {(lead as any).profileUrl && (
+                          <a href={(lead as any).profileUrl} target="_blank" rel="noopener noreferrer">
+                            <Button variant="ghost" size="icon" aria-label="View LinkedIn profile">
+                              <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-blue-400" />
+                            </Button>
+                          </a>
+                        )}
                       </div>
                     </td>
                   </tr>

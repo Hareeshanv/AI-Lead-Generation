@@ -12,6 +12,7 @@ export interface DiscoveredLeadSearchResult {
   domain: string;
   snippet: string;
   confidenceScore: number;
+  profileUrl: string | null;
 }
 
 function extractDomain(urlStr: string): string {
@@ -35,13 +36,76 @@ function extractDomain(urlStr: string): string {
   }
 }
 
+/**
+ * Extract the actual destination URL from a DuckDuckGo redirect link.
+ */
+function extractRealUrl(ddgUrl: string): string {
+  if (ddgUrl.includes("uddg=")) {
+    const parts = ddgUrl.split("uddg=");
+    if (parts[1]) {
+      return decodeURIComponent(parts[1].split("&")[0]);
+    }
+  }
+  return ddgUrl;
+}
+
+/**
+ * Parse a LinkedIn profile page title into structured parts.
+ * LinkedIn titles follow these patterns:
+ *   "Deepak K.S - Computer Science Student - RV University | LinkedIn"
+ *   "Rakesh CS - Bengaluru, Karnataka, India | LinkedIn"
+ *   "Yasasvini Reddy - Final Year Student at Target | LinkedIn"
+ */
+function parseLinkedInTitle(rawTitle: string): { name: string; title: string; company: string } {
+  // First, remove the " | LinkedIn" suffix
+  let cleaned = rawTitle.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim();
+
+  // Split by " - " (LinkedIn uses " - " as separator)
+  const parts = cleaned.split(/\s+-\s+/);
+
+  let name = parts[0]?.trim() || "";
+  let title = "";
+  let company = "";
+
+  if (parts.length >= 3) {
+    // Pattern: "Name - Title - Company"
+    title = parts[1]?.trim() || "";
+    company = parts.slice(2).join(" - ").trim();
+  } else if (parts.length === 2) {
+    const secondPart = parts[1]?.trim() || "";
+
+    // Check if second part is a location (e.g., "Bengaluru, Karnataka, India")
+    const isLocation = /^[A-Z][a-z]+,?\s+[A-Z]/i.test(secondPart) &&
+      (secondPart.includes(",") || /\b(India|USA|UK|Canada|Australia|Germany|Singapore)\b/i.test(secondPart));
+
+    if (isLocation) {
+      // Pattern: "Name - Location" (no title or company)
+      title = "";
+      company = "";
+    } else if (secondPart.toLowerCase().includes(" at ")) {
+      // Pattern: "Name - Title at Company"
+      const atParts = secondPart.split(/\s+at\s+/i);
+      title = atParts[0]?.trim() || "";
+      company = atParts.slice(1).join(" at ").trim();
+    } else {
+      // Pattern: "Name - Title" (no company)
+      title = secondPart;
+    }
+  }
+
+  // Clean up name — remove trailing location info
+  name = name.replace(/,\s*[A-Z][a-z]+.*$/i, "").trim();
+
+  return { name, title, company };
+}
+
 export class SearchProviderService {
   async discoverLeads(params: SearchQuery): Promise<DiscoveredLeadSearchResult[]> {
     let searchQuery = params.query;
     if (params.location) searchQuery += ` ${params.location}`;
     if (params.industry) searchQuery += ` ${params.industry}`;
 
-    // Only force LinkedIn if user is searching for people. If they search for contact lists/companies, don't append it
+    // Target LinkedIn profile pages for people searches
     const isContactOrCompanySearch = /contact|email|phone|website|academyhunt|address|coaching|company/i.test(params.query);
     if (!isContactOrCompanySearch) {
       searchQuery += " site:linkedin.com/in";
@@ -91,6 +155,7 @@ export class SearchProviderService {
         const rawTitle = titles[i];
         const rawUrl = urls[i] || "";
         const rawSnippet = snippets[i] || "";
+        const realUrl = extractRealUrl(rawUrl);
 
         // Skip results from job board domains entirely
         const resultDomain = extractDomain(rawUrl);
@@ -99,62 +164,68 @@ export class SearchProviderService {
           continue;
         }
 
-        // Split title by en-dash, em-dash, hyphen, pipe, or colon
-        const parts = rawTitle.split(/\s*[-–—|:]\s*/);
-        if (parts.length >= 1) {
-          let name = parts[0].trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim();
-          let title = parts[1] ? parts[1].trim() : "Professional";
-          let company = parts[2] ? parts[2].replace(/LinkedIn.*$/i, "").trim() : "";
+        // Detect profile type
+        const isLinkedInProfile = realUrl.includes("linkedin.com/in/") || realUrl.includes("linkedin.com/pub/");
+        const isGitHubProfile = realUrl.includes("github.com/") && !realUrl.includes("github.com/topics") && !realUrl.includes("github.com/search");
 
-          // ── Determine if this is a real person vs. a topic/listing ──
+        let name = "";
+        let title = "";
+        let company = "";
 
-          const isLinkedInProfile = rawUrl.includes("linkedin.com/in/") || rawUrl.includes("linkedin.com/pub/");
-          const isGitHubProfile = rawUrl.includes("github.com/") && !rawUrl.includes("github.com/topics") && !rawUrl.includes("github.com/search");
-          const isPersonProfileUrl = isLinkedInProfile || isGitHubProfile;
-
-          // Name-based filters: these patterns are NEVER a person's name
-          const startsWithNumber = /^\d/.test(name);
-          const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an )/i.test(name);
-          const hasJobKeywords = /\b(jobs?\s+in|internship|fresher|hiring|vacancy|vacanc|openings?|career|recruitment|apply|placement)\b/i.test(name);
-          const isSingleWordLocation = /^[A-Z][a-z]+$/.test(name) && name.length < 15 && /^(bangalore|bengaluru|mumbai|delhi|chennai|hyderabad|pune|kolkata|india|usa|london|new york)$/i.test(name);
-          const isTooLong = name.length > 60; // Article titles are usually very long
-          const hasNumericCount = /^\d+\+?\s/.test(name); // "364+ Computer Science..." or "24 Computer Science..."
-
-          const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount;
-
-          // Skip if name is definitely not a person (unless it's a confirmed LinkedIn/GitHub profile URL)
-          if (isDefinitelyNotPerson && !isPersonProfileUrl) {
-            continue;
-          }
-
-          // Basic name validity: must be > 2 chars
-          if (name.length <= 2) continue;
-
-          let domain = "";
-          if (rawUrl) {
-            domain = extractDomain(rawUrl);
-          }
-          if (!domain || domain.includes("linkedin.com") || domain.includes("duckduckgo.com") || domain.includes("github.com")) {
-            domain = `${name.toLowerCase().replace(/[^a-z]/g, "")}.com`;
-          }
-
-          // Extract company name from domain if it's a company website
-          const rawCompanyFromDomain = domain.split(".")[0];
-          const cleanCompanyFromDomain = rawCompanyFromDomain ? rawCompanyFromDomain.charAt(0).toUpperCase() + rawCompanyFromDomain.slice(1) : "";
-
-          company = company || cleanCompanyFromDomain || "Independent";
-          // Clean up LinkedIn-style suffixes from the name
-          name = name.replace(/\s*[-–—]\s*LinkedIn\s*$/i, "").trim();
-
-          liveLeads.push({
-            name,
-            title: title.length > 45 ? title.substring(0, 45) : title,
-            company: company,
-            domain,
-            snippet: rawSnippet.substring(0, 150),
-            confidenceScore: 85 + Math.floor(Math.random() * 10),
-          });
+        if (isLinkedInProfile) {
+          // Use specialized LinkedIn title parser
+          const parsed = parseLinkedInTitle(rawTitle);
+          name = parsed.name;
+          title = parsed.title;
+          company = parsed.company;
+        } else {
+          // Generic title parsing for non-LinkedIn results
+          const parts = rawTitle.split(/\s*[-–—|:]\s*/);
+          name = parts[0]?.trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim() || "";
+          title = parts[1]?.trim() || "";
+          company = parts[2]?.replace(/LinkedIn.*$/i, "").trim() || "";
         }
+
+        // ── Filter out non-person results ──
+        const startsWithNumber = /^\d/.test(name);
+        const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an )/i.test(name);
+        const hasJobKeywords = /\b(jobs?\s+in|internship|fresher|hiring|vacancy|vacanc|openings?|career|recruitment|apply|placement)\b/i.test(name);
+        const isSingleWordLocation = /^[A-Z][a-z]+$/.test(name) && /^(bangalore|bengaluru|mumbai|delhi|chennai|hyderabad|pune|kolkata|india|usa|london)$/i.test(name);
+        const isTooLong = name.length > 60;
+        const hasNumericCount = /^\d+\+?\s/.test(name);
+
+        const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount;
+
+        // Skip non-person results unless it's a confirmed profile URL
+        const isPersonProfileUrl = isLinkedInProfile || isGitHubProfile;
+        if (isDefinitelyNotPerson && !isPersonProfileUrl) {
+          continue;
+        }
+
+        // Basic validity
+        if (name.length <= 2) continue;
+
+        // Clean up name
+        name = name.replace(/\s*[-–—]\s*LinkedIn\s*$/i, "").trim();
+
+        // Use real domain from the URL, but don't auto-generate fake domains from names
+        let domain = "";
+        if (rawUrl && !resultDomain.includes("linkedin.com") && !resultDomain.includes("duckduckgo.com") && !resultDomain.includes("github.com")) {
+          domain = resultDomain;
+        }
+
+        // Determine the profile URL
+        const profileUrl = isPersonProfileUrl ? realUrl : null;
+
+        liveLeads.push({
+          name,
+          title: title || "",
+          company: company || "",
+          domain,
+          snippet: rawSnippet.substring(0, 300),
+          confidenceScore: isLinkedInProfile ? 90 : (isGitHubProfile ? 80 : 70),
+          profileUrl,
+        });
       }
 
       if (liveLeads.length > 0) {
@@ -165,32 +236,9 @@ export class SearchProviderService {
       console.warn(`[Search Service] Live search fallback: ${err?.message}`);
     }
 
-    return [
-      {
-        name: "Davin Mac Ananey",
-        title: "Fintech Founder & CEO",
-        company: "Hamilton Rock Capital",
-        domain: "hamiltonrock.com",
-        snippet: "Fintech Founder CEO | New York & Dublin | Building financial platforms.",
-        confidenceScore: 95,
-      },
-      {
-        name: "Garrett Smith",
-        title: "FinTech Entrepreneur & CEO",
-        company: "Community Capital Technology",
-        domain: "communitycap.com",
-        snippet: "FinTech Entrepreneur & Innovator | CEO & Founder at Community Capital Tech, NY.",
-        confidenceScore: 92,
-      },
-      {
-        name: "Lex Sokolin",
-        title: "Managing Partner & Co-Founder",
-        company: "Generative Ventures",
-        domain: "genventures.io",
-        snippet: "Co-Founder of Generative Ventures, investing in Fintech, Web3, and AI.",
-        confidenceScore: 89,
-      },
-    ];
+    // Empty array fallback — no fabricated leads
+    console.log("[Search Service] No live leads found from web search.");
+    return [];
   }
 }
 

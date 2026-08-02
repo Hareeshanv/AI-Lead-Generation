@@ -55,6 +55,19 @@ export const leadApi = {
     }
   },
 
+  clearAllLeads: async (): Promise<void> => {
+    try {
+      const { error } = await supabase.from("leads").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      if (error) {
+        console.warn("[leadApi] Failed to clear leads:", error.message);
+      } else {
+        console.log("[leadApi] All leads cleared from database.");
+      }
+    } catch (err: any) {
+      console.warn("[leadApi] Clear leads error:", err?.message);
+    }
+  },
+
   createLead: async (lead: Partial<Lead>): Promise<Lead> => {
     try {
       const { data, error } = await supabase

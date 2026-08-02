@@ -17,6 +17,16 @@ export const dbQueries = {
     return data?.[0];
   },
 
+  async clearAllLeads() {
+    const { error } = await dbClient.from("leads").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    if (error) {
+      console.warn("Failed to clear leads:", error.message);
+      throw new Error(`Supabase clear leads failed: ${error.message}`);
+    }
+    console.log("[DB] All leads cleared from database.");
+    return { success: true };
+  },
+
   // Companies
   async getAllCompanies() {
     const { data, error } = await dbClient.from("companies").select("*").order("created_at", { ascending: false });

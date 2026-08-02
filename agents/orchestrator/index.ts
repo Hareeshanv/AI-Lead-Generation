@@ -85,51 +85,47 @@ export class AgentOrchestrator {
         techStack: ["Next.js", "PostgreSQL", "AWS"],
       });
 
-      // Try to extract email/phone from snippet if available
+      // Try to extract email/phone from snippet if available — NEVER fabricate
       const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
       const emailMatch = rawLead.snippet ? rawLead.snippet.match(emailRegex) : null;
-      const email = emailMatch ? emailMatch[0] : rawLead.email;
+      const email = emailMatch ? emailMatch[0] : (rawLead.email || "Not available");
 
       const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;
       const phoneMatch = rawLead.snippet ? rawLead.snippet.match(phoneRegex) : null;
+      const phone = phoneMatch ? phoneMatch[0] : (rawLead.phone_number || "Not available");
       
-      const loc = params.location || "San Francisco, CA";
-      const isIndia = loc.toLowerCase().includes("india") || loc.toLowerCase().includes("bangalore") || loc.toLowerCase().includes("mumbai") || loc.toLowerCase().includes("bengaluru");
-      const defaultPhone = isIndia 
-        ? `+91 98${Math.floor(10 + Math.random() * 90)} ${Math.floor(10000 + Math.random() * 90000)}`
-        : "+1 (555) 019-2831";
-      const phone = phoneMatch ? phoneMatch[0] : defaultPhone;
+      const loc = params.location || "Not specified";
 
       // 6. Persist to Supabase Database
       const newLead = {
         name: rawLead.name,
-        title: rawLead.title,
-        company: rawLead.company,
+        title: rawLead.title || "Not available",
+        company: rawLead.company || "Not available",
         email,
         phone,
         location: loc,
         score: leadScore,
-        status: leadScore >= 80 ? "Hot" : "Warm",
+        status: leadScore >= 80 ? "Hot" : (leadScore >= 50 ? "Warm" : "Cold"),
         source: "AI Search Discovery Agent",
         owner: "Alex Sterling",
         avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
-        industry: params.industry || "SaaS & AI",
-        company_size: "250 - 500",
-        annual_revenue: "$45M",
-        tech_stack: ["Next.js", "PostgreSQL", "AWS"],
-        tags: ["AI Verified", "High ICP Fit"],
+        industry: rawLead.industry || params.industry || "Technology",
+        company_size: "Not available",
+        annual_revenue: "Not available",
+        tech_stack: rawLead.skills || [],
+        tags: [rawLead.profile_url ? "LinkedIn Verified" : "Web Search", leadScore >= 80 ? "High ICP Fit" : "Prospect"],
         // Enrichment fields
-        verified_email: null,
-        estimated_email: rawLead.email || null,
-        email_confidence: "low",
-        phone_confidence: null,
+        verified_email: rawLead.verified_email || null,
+        estimated_email: rawLead.estimated_email || null,
+        email_confidence: email !== "Not available" ? "medium" : "low",
+        phone_confidence: phone !== "Not available" ? "medium" : null,
         profile_url: rawLead.profile_url || null,
-        verified_email_source: null,
-        estimated_email_source: "Pattern derived from name + domain",
-        phone_source: null,
-        profile_url_source: null,
-        industry_source: null,
-        source_channel: "Local Search",
+        verified_email_source: rawLead.verified_email_source || null,
+        estimated_email_source: rawLead.estimated_email_source || null,
+        phone_source: phone !== "Not available" ? "Search snippet" : null,
+        profile_url_source: rawLead.profile_url_source || null,
+        industry_source: rawLead.industry_source || "Query context",
+        source_channel: rawLead.source_channel || "Local Search",
       };
 
       try {

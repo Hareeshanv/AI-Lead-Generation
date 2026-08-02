@@ -22,3 +22,13 @@ leadsRouter.post("/", async (req, res) => {
     res.status(400).json({ success: false, error: err?.message || "Failed to create lead" });
   }
 });
+
+// DELETE /api/leads — Clear all leads from the database
+leadsRouter.delete("/", async (_req, res) => {
+  try {
+    await dbQueries.clearAllLeads();
+    res.json({ success: true, message: "All leads cleared" });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to clear leads" });
+  }
+});

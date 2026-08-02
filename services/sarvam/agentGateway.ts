@@ -1,6 +1,7 @@
 import { sarvamClient, SarvamAgentResponse } from "./index";
 import { dbQueries } from "../../packages/database/src";
 import { searchService } from "../search";
+import { enrichLeadsWithAI, type RawSearchLead } from "../openai/enrichLeads";
 
 /**
  * Agent Gateway — Maps internal agent IDs to Sarvam AI platform agent IDs
@@ -448,94 +449,95 @@ class AgentGateway {
     }
 
     if (generatedLeads.length === 0) {
-      // Perform REAL Live Web Search Discovery
+      // Perform REAL Live Web Search Discovery + OpenAI Enrichment
       try {
         const searchHits = await searchService.discoverLeads(params);
         if (searchHits && searchHits.length > 0) {
-          generatedLeads = searchHits.map((hit, idx) => {
-            // Try to extract email from snippet
+          console.log(`[AgentGateway] Got ${searchHits.length} raw search hits. Enriching with OpenAI...`);
+
+          // Prepare raw leads for OpenAI enrichment
+          const rawLeads: RawSearchLead[] = searchHits.map((hit) => ({
+            name: hit.name,
+            title: hit.title,
+            company: hit.company,
+            snippet: hit.snippet,
+            profileUrl: hit.profileUrl || null,
+            domain: hit.domain,
+          }));
+
+          // Enrich with OpenAI GPT-4o-mini (extracts real company, title, location, industry)
+          const enrichedLeads = await enrichLeadsWithAI(rawLeads, params.query);
+
+          generatedLeads = enrichedLeads.map((enriched, idx) => {
+            const hit = searchHits[idx];
+
+            // Only use email if actually found in search snippet — NEVER fabricate
             const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
             const emailMatch = hit.snippet.match(emailRegex);
-            const isCorporate = hit.name.endsWith("Contact");
-            const emailPrefix = isCorporate ? "info" : hit.name.toLowerCase().replace(/[^a-z]/g, "");
-            const email = emailMatch ? emailMatch[0] : `${emailPrefix}@${hit.domain || "gmail.com"}`;
+            const email = emailMatch ? emailMatch[0] : (enriched.estimatedEmail || "Not available");
 
-            // Try to extract phone number from snippet
+            // Only use phone if actually found in snippet — NEVER fabricate
             const phoneRegex = /(\+91[\s-]?\d{5}[\s-]?\d{5}|\+91[\s-]?\d{10}|\b\d{10}\b|\+1[\s-]?\d{3}[\s-]?\d{3}[\s-]?\d{4})/;
             const phoneMatch = hit.snippet.match(phoneRegex);
-            
-            // Generate a local Indian phone number if target location is in India
-            const isIndia = loc.toLowerCase().includes("india") || loc.toLowerCase().includes("bangalore") || loc.toLowerCase().includes("mumbai") || loc.toLowerCase().includes("bengaluru");
-            const defaultPhone = isIndia 
-              ? `+91 98${Math.floor(10 + Math.random() * 90)} ${Math.floor(10000 + Math.random() * 90000)}`
-              : `+1 (555) 01${idx + 2}-${Math.floor(1000 + Math.random() * 9000)}`;
-            const phone = phoneMatch ? phoneMatch[0] : defaultPhone;
+            const phone = phoneMatch ? phoneMatch[0] : "Not available";
+
+            // Calculate ICP score based on actual data completeness
+            let score = 0;
+            if (enriched.name) score += 15;
+            if (enriched.title) score += 20;
+            if (enriched.company) score += 25;
+            if (enriched.profileUrl) score += 20;
+            if (email !== "Not available") score += 15;
+            if (phone !== "Not available") score += 5;
+            score = Math.min(score, 100);
 
             return {
-              name: hit.name,
-              title: hit.title,
-              company: hit.company,
+              name: enriched.name || hit.name,
+              title: enriched.title || hit.title || "Not available",
+              company: enriched.company || "Not available",
               email,
               phone,
-              location: loc,
-              score: hit.confidenceScore || (85 + idx * 2),
-              status: (hit.confidenceScore || 85) >= 80 ? "Hot" : "Warm",
-              source: "LIVE Web Search Discovery Engine",
+              location: enriched.location || loc,
+              score,
+              status: score >= 70 ? "Hot" : (score >= 50 ? "Warm" : "Cold"),
+              source: "AI Search Discovery Engine",
               owner: "Alex Sterling",
-              avatar: `https://images.unsplash.com/photo-${1534528741775 + idx * 1000}?auto=format&fit=crop&w=150&q=80`,
-              industry: ind,
-              company_size: "50 - 500",
-              annual_revenue: "$25M+",
-              tech_stack: ["Web Search Verified", "Live Web Signal"],
-              tags: ["Live Prospect", "Real-Time Verified"],
+              avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
+              industry: enriched.industry || ind,
+              company_size: "Not available",
+              annual_revenue: "Not available",
+              tech_stack: enriched.skills || [],
+              tags: [enriched.profileUrl ? "LinkedIn Verified" : "Web Search", score >= 70 ? "High ICP Fit" : "Prospect"],
+              // Enrichment fields
+              verified_email: null,
+              estimated_email: enriched.estimatedEmail || null,
+              email_confidence: enriched.emailConfidence || (email !== "Not available" ? "medium" : null),
+              phone_confidence: phone !== "Not available" ? "medium" : null,
+              profile_url: enriched.profileUrl || hit.profileUrl || null,
+              verified_email_source: null,
+              estimated_email_source: enriched.estimatedEmail ? "AI pattern analysis" : null,
+              phone_source: phone !== "Not available" ? "Search snippet" : null,
+              profile_url_source: enriched.profileUrl ? "DuckDuckGo search" : null,
+              industry_source: "AI classification",
+              source_channel: "Live Web Search + OpenAI Enrichment",
             };
           });
+
+          console.log(`[AgentGateway] Enriched ${generatedLeads.length} leads with real data.`);
         }
       } catch (err: any) {
-        console.warn("[AgentGateway] Live search error, falling back:", err?.message);
+        console.warn("[AgentGateway] Live search + enrichment error:", err?.message);
       }
     }
 
-    if (generatedLeads.length === 0) {
-      generatedLeads = category === "B2B" ? [
-        {
-          name: "Sarah Jenkins",
-          title: "VP of Product Strategy",
-          company: `${ind} PayTech Solutions`,
-          email: "sarah.jenkins@paytech.io",
-          phone: "+1 (555) 019-2831",
-          location: loc,
-          score: 92,
-          status: "Hot",
-          source: "Sarvam AI Discovery Agent",
-          owner: "Alex Sterling",
-          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
-          industry: ind,
-          company_size: "250 - 500",
-          annual_revenue: "$45M",
-          tech_stack: ["Next.js", "PostgreSQL", "AWS"],
-          tags: ["AI Verified", "High ICP Fit"],
-        },
-      ] : [
-        {
-          name: "Marcus Vance",
-          title: "Private Investor & Property Buyer",
-          company: "Vance Holdings",
-          email: "marcus.vance@vanceholdings.com",
-          phone: "+1 (555) 012-3901",
-          location: loc,
-          score: 95,
-          status: "Hot",
-          source: "Sarvam AI Discovery Agent (B2C)",
-          owner: "Alex Sterling",
-          avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80",
-          industry: "Real Estate & Investments",
-          company_size: "1 - 10",
-          annual_revenue: "$5M+",
-          tech_stack: ["Private Equity", "High Net Worth"],
-          tags: ["High Intent", "B2C Verified"],
-        },
-      ];
+    // Clear old stale leads before inserting fresh results
+    if (generatedLeads.length > 0) {
+      try {
+        await dbQueries.clearAllLeads();
+        console.log("[AgentGateway] Cleared old leads before inserting fresh results.");
+      } catch (err: any) {
+        console.warn("[AgentGateway] Could not clear old leads:", err?.message);
+      }
     }
 
     // Persist generated leads to Supabase DB
