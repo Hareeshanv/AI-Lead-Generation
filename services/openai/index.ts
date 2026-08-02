@@ -13,10 +13,8 @@ export interface LLMResponse {
 }
 
 export class OpenAIService {
-  private apiKey: string;
-
-  constructor() {
-    this.apiKey = process.env.OPENAI_API_KEY || "";
+  private get apiKey(): string {
+    return process.env.OPENAI_API_KEY || "";
   }
 
   async generateText(request: LLMRequest): Promise<LLMResponse> {

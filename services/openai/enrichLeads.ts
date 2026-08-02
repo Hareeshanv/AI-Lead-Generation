@@ -125,32 +125,52 @@ Return ONLY valid JSON array, no explanation.`;
 
 /**
  * Basic enrichment without AI — extracts what we can from the raw data.
- * Used as a fallback when OpenAI is unavailable.
+ * Used as a fallback when OpenAI is unavailable or API key has insufficient quota.
  */
 function basicEnrich(lead: RawSearchLead, queryContext: string): EnrichedLead {
-  // Try to extract real company from title if it contains "at" or "from"
-  let company = lead.company;
-  if (
-    !company ||
-    company === "Independent" ||
-    company.toLowerCase() === lead.name.toLowerCase().replace(/[^a-z]/g, "")
-  ) {
-    // Company was auto-generated from name — try to extract from title
-    const atMatch = lead.title.match(/(?:at|@)\s+(.+)/i);
-    if (atMatch) {
-      company = atMatch[1].trim();
-    } else {
-      company = null as any;
+  let company: string | null = lead.company;
+  let title: string | null = lead.title !== "Professional" ? lead.title : null;
+
+  const combinedText = `${lead.title} ${lead.snippet}`;
+
+  // 1. Try to extract university / college / institution / company from title or snippet
+  const uniMatch = combinedText.match(/\b([A-Z][A-Za-z0-9\s.&'-]+(?:University|Institute|College|Academy|IIT|NIT|IIIT|BMSIT|PES|RVCE|MSRIT|RAMAIAH|R.V.|Dayananda|Jain|Christ))\b/i);
+  const companyAtMatch = combinedText.match(/(?:at|@)\s+([A-Z][A-Za-z0-9\s.&'-]+)/i);
+
+  if (uniMatch) {
+    company = uniMatch[1].trim();
+  } else if (companyAtMatch) {
+    company = companyAtMatch[1].split(/[-–—|,.]/)[0].trim();
+  } else if (!company || company === "Independent" || company.toLowerCase() === lead.name.toLowerCase().replace(/[^a-z]/g, "")) {
+    company = null;
+  }
+
+  // 2. Extract title if missing or generic
+  if (!title || title === "Professional") {
+    const studentMatch = combinedText.match(/(Computer Science Student|CS Student|Software Engineering Student|Student|Intern|Software Engineer|Data Analyst|AI Researcher|Developer)/i);
+    if (studentMatch) {
+      title = studentMatch[1];
+    } else if (queryContext.toLowerCase().includes("student")) {
+      title = "Computer Science Student";
+    }
+  }
+
+  // 3. Extract skills from snippet
+  const techKeywords = ["Python", "Java", "C\\+\\+", "JavaScript", "TypeScript", "React", "Node\\.js", "MERN", "AI", "Machine Learning", "Data Science", "SQL", "PostgreSQL", "AWS", "Flutter"];
+  const foundSkills: string[] = [];
+  for (const kw of techKeywords) {
+    if (new RegExp(`\\b${kw}\\b`, "i").test(combinedText)) {
+      foundSkills.push(kw.replace(/\\\\/g, ""));
     }
   }
 
   return {
     name: lead.name,
-    title: lead.title !== "Professional" ? lead.title : null,
+    title: title || (queryContext.toLowerCase().includes("student") ? "Computer Science Student" : null),
     company: company || null,
     location: extractLocationFromQuery(queryContext),
     industry: inferIndustryFromQuery(queryContext),
-    skills: null,
+    skills: foundSkills.length > 0 ? foundSkills : null,
     profileUrl: lead.profileUrl,
     estimatedEmail: null,
     emailConfidence: null,
