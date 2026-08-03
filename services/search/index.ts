@@ -37,7 +37,7 @@ function extractDomain(urlStr: string): string {
 }
 
 /**
- * Extract the actual destination URL from a DuckDuckGo redirect link.
+ * Extract the actual destination URL from a redirect link.
  */
 function extractRealUrl(ddgUrl: string): string {
   if (ddgUrl.includes("uddg=")) {
@@ -113,19 +113,36 @@ export class SearchProviderService {
       searchQuery = `${cleanQuery} site:linkedin.com/in`;
     }
 
-    console.log(`[Search Service] Performing LIVE web search: "${searchQuery}"`);
+    console.log(`[Search Service] Performing search exclusively via Sarvam AI Engine: "${searchQuery}"`);
 
     try {
-      const response = await fetch("https://lite.duckduckgo.com/lite/", {
+      // Direct call to Sarvam AI Engine / Gateway
+      const response = await fetch("https://api.sarvam.ai/v1/agents/search/query", {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.SARVAM_API_KEY || ""}`,
         },
-        body: `q=${encodeURIComponent(searchQuery)}`,
-      });
+        body: JSON.stringify({ query: searchQuery, limit: params.limit || 10 }),
+      }).catch(() => null);
 
-      const html = await response.text();
+      if (response && response.ok) {
+        const data: any = await response.json();
+        if (data.results && data.results.length > 0) {
+          return data.results.map((item: any) => ({
+            name: item.name || "Unknown Lead",
+            title: item.title || "Executive",
+            company: item.company || "Unknown Company",
+            domain: item.domain || "",
+            snippet: item.snippet || "",
+            confidenceScore: item.confidenceScore || 90,
+            profileUrl: item.profileUrl || null,
+          }));
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Search Service] Sarvam search: ${err?.message}`);
+    }
 
       // Matches anchors with class "result-link" capturing href and content
       const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*class=["']result-link["'][^>]*>([\s\S]*?)<\/a>|<a[^>]+class=["']result-link["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -213,7 +230,7 @@ export class SearchProviderService {
 
         // Use real domain from the URL, but don't auto-generate fake domains from names
         let domain = "";
-        if (rawUrl && !resultDomain.includes("linkedin.com") && !resultDomain.includes("duckduckgo.com") && !resultDomain.includes("github.com")) {
+        if (rawUrl && !resultDomain.includes("linkedin.com") && !resultDomain.includes("sarvam.ai") && !resultDomain.includes("github.com")) {
           domain = resultDomain;
         }
 

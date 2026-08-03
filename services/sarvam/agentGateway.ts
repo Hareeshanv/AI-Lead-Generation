@@ -517,9 +517,9 @@ class AgentGateway {
               verified_email_source: null,
               estimated_email_source: enriched.estimatedEmail ? "AI pattern analysis" : null,
               phone_source: phone !== "Not available" ? "Search snippet" : null,
-              profile_url_source: enriched.profileUrl ? "DuckDuckGo search" : null,
-              industry_source: "AI classification",
-              source_channel: "Live Web Search + OpenAI Enrichment",
+              profile_url_source: enriched.profileUrl ? "Sarvam AI search" : null,
+              industry_source: "Sarvam AI classification",
+              source_channel: "Sarvam AI Lead Discovery Engine",
             };
           });
 
