@@ -105,23 +105,14 @@ export class SearchProviderService {
     if (params.location) searchQuery += ` ${params.location}`;
     if (params.industry) searchQuery += ` ${params.industry}`;
 
-    // Format search query to prioritize LinkedIn profiles and person search
-    const hasExplicitSite = params.query.includes("site:");
-    if (!hasExplicitSite) {
-      // Clean query by removing noise words for target search
-      const cleanQuery = params.query.replace(/\b(email|phone|contact|number|b2b|b2c|in|list|database)\b/gi, "").replace(/\s+/g, " ").trim();
-      searchQuery = `${cleanQuery} site:linkedin.com/in`;
-    }
-
     console.log(`[Search Service] Performing search exclusively via Sarvam AI Engine: "${searchQuery}"`);
 
     try {
-      // Direct call to Sarvam AI Engine / Gateway
       const response = await fetch("https://api.sarvam.ai/v1/agents/search/query", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${process.env.SARVAM_API_KEY || ""}`,
+          Authorization: `Bearer ${process.env.SARVAM_API_KEY || ""}`,
         },
         body: JSON.stringify({ query: searchQuery, limit: params.limit || 10 }),
       }).catch(() => null);
@@ -144,122 +135,10 @@ export class SearchProviderService {
       console.warn(`[Search Service] Sarvam search: ${err?.message}`);
     }
 
-      // Matches anchors with class "result-link" capturing href and content
-      const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*class=["']result-link["'][^>]*>([\s\S]*?)<\/a>|<a[^>]+class=["']result-link["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-      const snippetRegex = /<td[^>]+class=["']result-snippet["'][^>]*>([\s\S]*?)<\/td>/gi;
-
-      const titles: string[] = [];
-      const urls: string[] = [];
-      const snippets: string[] = [];
-
-      let match: RegExpExecArray | null;
-      while ((match = linkRegex.exec(html)) !== null) {
-        const url = match[1] || match[3] || "";
-        const title = match[2] || match[4] || "";
-        urls.push(url.trim());
-        titles.push(title.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
-      }
-
-      let snippetMatch: RegExpExecArray | null;
-      while ((snippetMatch = snippetRegex.exec(html)) !== null) {
-        snippets.push(snippetMatch[1].replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/&amp;/g, "&").trim());
-      }
-
-      const liveLeads: DiscoveredLeadSearchResult[] = [];
-
-      // Job board / directory domains that never contain person profiles
-      const jobBoardDomains = ["internshala.com", "naukri.com", "indeed.com", "glassdoor.com", "simplyhired.com", "monster.com", "shine.com", "foundit.in", "timesjobs.com", "freshersworld.com", "apna.co"];
-
-      for (let i = 0; i < titles.length; i++) {
-        const rawTitle = titles[i];
-        const rawUrl = urls[i] || "";
-        const rawSnippet = snippets[i] || "";
-        const realUrl = extractRealUrl(rawUrl);
-
-        // Skip results from job board domains entirely
-        const resultDomain = extractDomain(rawUrl);
-        const isJobBoardDomain = jobBoardDomains.some(jb => resultDomain.includes(jb));
-        if (isJobBoardDomain) {
-          continue;
-        }
-
-        // Detect profile type
-        const isLinkedInProfile = realUrl.includes("linkedin.com/in/") || realUrl.includes("linkedin.com/pub/");
-        const isGitHubProfile = realUrl.includes("github.com/") && !realUrl.includes("github.com/topics") && !realUrl.includes("github.com/search");
-
-        let name = "";
-        let title = "";
-        let company = "";
-
-        if (isLinkedInProfile) {
-          // Use specialized LinkedIn title parser
-          const parsed = parseLinkedInTitle(rawTitle);
-          name = parsed.name;
-          title = parsed.title;
-          company = parsed.company;
-        } else {
-          // Generic title parsing for non-LinkedIn results
-          const parts = rawTitle.split(/\s*[-–—|:]\s*/);
-          name = parts[0]?.trim().replace(/\(.*?\)/g, "").replace(/,.*$/g, "").trim() || "";
-          title = parts[1]?.trim() || "";
-          company = parts[2]?.replace(/LinkedIn.*$/i, "").trim() || "";
-        }
-
-        // ── Filter out non-person results ──
-        const startsWithNumber = /^\d/.test(name);
-        const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an |find|contact|about)/i.test(name);
-        const hasJobKeywords = /\b(jobs?\s+in|internship|fresher|hiring|vacancy|vacanc|openings?|career|recruitment|apply|placement)\b/i.test(name);
-        const isSingleWordLocation = /^[A-Z][a-z]+$/.test(name) && /^(bangalore|bengaluru|mumbai|delhi|chennai|hyderabad|pune|kolkata|india|usa|london)$/i.test(name);
-        const isTooLong = name.length > 60;
-        const hasNumericCount = /^\d+\+?\s/.test(name);
-        const isGenericSeoTitle = /\b(decision maker|phone number|contact database|lead finder|email finder|b2b contact|b2b lead|contact us|database search|search engine|top \d+|best \d+)\b/i.test(name);
-
-        const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount || isGenericSeoTitle;
-
-        // Skip non-person results unless it's a confirmed profile URL
-        const isPersonProfileUrl = isLinkedInProfile || isGitHubProfile;
-        if (isDefinitelyNotPerson && !isPersonProfileUrl) {
-          continue;
-        }
-
-        // Basic validity
-        if (name.length <= 2) continue;
-
-        // Clean up name
-        name = name.replace(/\s*[-–—]\s*LinkedIn\s*$/i, "").trim();
-
-        // Use real domain from the URL, but don't auto-generate fake domains from names
-        let domain = "";
-        if (rawUrl && !resultDomain.includes("linkedin.com") && !resultDomain.includes("sarvam.ai") && !resultDomain.includes("github.com")) {
-          domain = resultDomain;
-        }
-
-        // Determine the profile URL
-        const profileUrl = isPersonProfileUrl ? realUrl : null;
-
-        liveLeads.push({
-          name,
-          title: title || "",
-          company: company || "",
-          domain,
-          snippet: rawSnippet.substring(0, 300),
-          confidenceScore: isLinkedInProfile ? 90 : (isGitHubProfile ? 80 : 70),
-          profileUrl,
-        });
-      }
-
-      if (liveLeads.length > 0) {
-        console.log(`[Search Service] Successfully extracted ${liveLeads.length} LIVE leads from web search.`);
-        return liveLeads.slice(0, params.limit || 10);
-      }
-    } catch (err: any) {
-      console.warn(`[Search Service] Live search fallback: ${err?.message}`);
-    }
-
-    // Empty array fallback — no fabricated leads
-    console.log("[Search Service] No live leads found from web search.");
+    console.log("[Search Service] Sarvam AI Search completed.");
     return [];
   }
 }
 
 export const searchService = new SearchProviderService();
+
