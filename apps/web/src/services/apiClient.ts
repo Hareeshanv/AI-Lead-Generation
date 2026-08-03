@@ -23,8 +23,8 @@ export const leadApi = {
         return mockLeads;
       }
       if (!data || data.length === 0) {
-        console.log("[leadApi] No leads found in Supabase database. Returning empty list.");
-        return mockLeads;
+        console.log("[leadApi] No leads found in Supabase database.");
+        return [];
       }
       return data.map((d: any) => ({
         id: d.id,
