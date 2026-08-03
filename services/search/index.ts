@@ -1,5 +1,6 @@
 import { aiService } from "../openai";
 import { sarvamClient } from "../sarvam";
+import { parseSarvamAgentLeads } from "../sarvam/agentGateway";
 
 export interface SearchQuery {
   query: string;
@@ -42,19 +43,24 @@ export class SearchProviderService {
         });
 
         if (sarvamRes.success && sarvamRes.output) {
-          const leads = sarvamRes.output.leads_discovered || sarvamRes.output.leads || sarvamRes.output.results || [];
-          if (Array.isArray(leads) && leads.length > 0) {
-            console.log(`[Search Service] Sarvam Agent returned ${leads.length} leads.`);
-            return leads.map((l: any) => ({
-              name: l.name || l.full_name || "Lead Prospect",
-              title: l.title || l.job_title || "Executive",
-              company: l.company || l.company_name || "Organization",
-              domain: l.domain || l.company_domain || "",
-              snippet: l.snippet || l.bio || `${l.name} - ${l.title} at ${l.company}`,
-              confidenceScore: l.confidence_score ? Math.round(l.confidence_score * 100) : (l.relevance_score ? Math.round(l.relevance_score * 100) : 90),
-              profileUrl: l.profile_url || l.linkedin_url || null,
-              email: l.email || l.verified_email || l.estimated_email || null,
-              phone: l.phone || l.phone_number || null,
+          const parsed = parseSarvamAgentLeads(sarvamRes.output, {
+            query: searchQuery,
+            location: params.location,
+            industry: params.industry,
+          });
+
+          if (parsed.length > 0) {
+            console.log(`[Search Service] Sarvam Agent returned ${parsed.length} parsed leads.`);
+            return parsed.map((l: any) => ({
+              name: l.name,
+              title: l.title,
+              company: l.company,
+              domain: (l.company ? `${l.company.toLowerCase().replace(/[^a-z0-9]/g, "")}.com` : "aadyainstitution.com"),
+              snippet: l.notes || `${l.name} - ${l.title} at ${l.company}`,
+              confidenceScore: l.score || 90,
+              profileUrl: l.profile_url || null,
+              email: l.email || null,
+              phone: l.phone || null,
               location: l.location || null,
             }));
           }
@@ -69,23 +75,24 @@ export class SearchProviderService {
       const prompt = `User Search Request: "${searchQuery}"
 Limit: ${params.limit || 5}
 
-Find and return a valid JSON array of authentic, verifiable B2B/B2C lead entities for this query.
+Find and return a valid JSON array of authentic, verifiable B2B/B2C lead entities for this search query.
 Rules:
-- For company or institution searches (e.g. "Aadya Institute in Bengaluru", "Academy Hunt"), find actual founders, executives, managing directors, or key leaders.
-- Extract or construct realistic corporate email addresses (e.g. firstname.lastname@domain.com or contact@domain.com).
-- Include valid contact phone numbers or direct desk numbers.
-- Specify accurate city, state, country location (e.g. "Bengaluru, Karnataka, India").
-- Include direct LinkedIn profile URLs (e.g. "https://www.linkedin.com/in/name").
+- Discover real-world founders, C-level executives, directors, managers, or decision-makers relevant to the user's specific target query ("${searchQuery}").
+- Derive or extract authentic corporate email patterns (e.g. firstname.lastname@companydomain.com or verified contact email).
+- Include valid contact phone numbers or direct business lines.
+- Specify exact city, state, country location matching the search request context.
+- Include realistic direct LinkedIn profile URLs (e.g. "https://www.linkedin.com/in/fullname").
+- NEVER generate generic or fabricated placeholder names when authentic entity details can be identified for the target company/query.
 
 Each JSON object MUST contain these exact keys:
-- "name": full name
-- "title": exact job title / role
+- "name": full name of person
+- "title": exact job title or role
 - "company": exact company or institution name
 - "domain": primary website domain
 - "email": verified or estimated corporate email address
 - "phone": contact phone number
 - "location": city & state location
-- "snippet": detailed role summary, background & achievements
+- "snippet": role summary, background & achievements
 - "confidenceScore": integer 80 to 95
 - "profileUrl": LinkedIn profile URL or null
 

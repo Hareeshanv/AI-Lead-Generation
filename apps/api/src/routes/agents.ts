@@ -51,19 +51,38 @@ agentsRouter.get("/", async (_req, res) => {
 
 agentsRouter.post("/run", async (req, res) => {
   try {
-    const {
-      query = "Fintech Engineering Executives",
-      industry = req.body.query ? req.body.industry : (req.body.industry || "Fintech & Payments"),
-      category = "B2B",
-      location = req.body.query ? req.body.location : (req.body.location || "San Francisco, CA"),
-      targetCount = 50,
-    } = req.body;
+    let rawQuery = req.body.query || "Fintech Engineering Executives";
+    let location = req.body.location || "";
+    let category = req.body.category || "B2B";
+    let targetCount = req.body.targetCount ? Number(req.body.targetCount) : 50;
+    let industry = req.body.industry || "";
+
+    // Parse formatted queries like "[B2B] Aadya institite founders in bengaluru (Target: 50 leads)"
+    const categoryMatch = rawQuery.match(/^\[(B2B|B2C)\]\s*/i);
+    if (categoryMatch) {
+      category = categoryMatch[1].toUpperCase();
+      rawQuery = rawQuery.replace(/^\[(B2B|B2C)\]\s*/i, "");
+    }
+
+    const volumeMatch = rawQuery.match(/\(Target:\s*(\d+)\s*leads\)/i);
+    if (volumeMatch) {
+      targetCount = parseInt(volumeMatch[1], 10);
+      rawQuery = rawQuery.replace(/\(Target:\s*\d+\s*leads\)/i, "");
+    }
+
+    const inLocationMatch = rawQuery.match(/\s+in\s+([A-Za-z0-9\s,]+)$/i);
+    if (inLocationMatch && !location) {
+      location = inLocationMatch[1].trim();
+      rawQuery = rawQuery.replace(/\s+in\s+[A-Za-z0-9\s,]+$/i, "");
+    }
+
+    const cleanQuery = rawQuery.trim();
 
     const result = await orchestrator.runLeadGenerationPipeline({
-      query,
-      industry,
-      category,
-      location,
+      query: cleanQuery,
+      industry: industry || undefined,
+      category: (category === "B2C" ? "B2C" : "B2B"),
+      location: location || undefined,
       targetCount,
     });
 
