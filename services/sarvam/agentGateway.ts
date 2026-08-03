@@ -261,9 +261,24 @@ class AgentGateway {
         const response = await this.runAgent(agentId, previousOutput);
 
         if (response && response.success) {
-          // Record step and continue execution with AI Lead Discovery Engine
+          // Detect if this was a simulated (fallback) response
           if (response.output?.simulated === true) {
-            console.log(`[Pipeline] ℹ ${agentName} executed via AI Engine.`);
+            sarvamApiReachable = false;
+            console.log(`[Pipeline] ⚠ ${agentName} returned simulated response — Sarvam API not reachable. Skipping remaining agents.`);
+            steps.push({
+              agentId,
+              agentName,
+              status: "skipped",
+              output: response.output,
+              durationMs: response.durationMs,
+              tokensUsed: 0,
+            });
+            // Still store the output for downstream use
+            previousOutput = {
+              ...previousOutput,
+              [`${agentId.replace("agt-", "")}_result`]: response.output,
+            };
+            continue;
           }
 
           const stepResult: PipelineStepResult = {

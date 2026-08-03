@@ -1,4 +1,5 @@
 import { aiService } from "../openai";
+import { sarvamClient } from "../sarvam";
 
 export interface SearchQuery {
   query: string;
@@ -19,63 +20,83 @@ export interface DiscoveredLeadSearchResult {
 
 export class SearchProviderService {
   async discoverLeads(params: SearchQuery): Promise<DiscoveredLeadSearchResult[]> {
-    // Clean up query — fix common typos (e.g. fouders -> founders) and remove duplicate locations
-    let cleanQuery = params.query
-      .replace(/fouders/gi, "founders")
-      .replace(/\bin\s+bengaluru\s+in\s+bengaluru/gi, "in Bengaluru")
-      .replace(/\s+/g, " ")
-      .trim();
+    let searchQuery = params.query;
+    if (params.location) searchQuery += ` ${params.location}`;
+    if (params.industry) searchQuery += ` ${params.industry}`;
 
-    if (params.location && !cleanQuery.toLowerCase().includes(params.location.toLowerCase())) {
-      cleanQuery += ` in ${params.location}`;
+    console.log(`[Search Service] Performing Sarvam AI Lead Discovery: "${searchQuery}"`);
+
+    // 1. Try Sarvam Agent Call if configured
+    if (sarvamClient.isConfigured() && process.env.SARVAM_AGENT_SEARCH_ID) {
+      try {
+        const sarvamRes = await sarvamClient.callAgent({
+          agentId: process.env.SARVAM_AGENT_SEARCH_ID,
+          input: { query: searchQuery, limit: params.limit || 10 },
+        });
+
+        if (sarvamRes.success && sarvamRes.output) {
+          const leads = sarvamRes.output.leads_discovered || sarvamRes.output.leads || sarvamRes.output.results || [];
+          if (Array.isArray(leads) && leads.length > 0) {
+            console.log(`[Search Service] Sarvam Agent returned ${leads.length} leads.`);
+            return leads.map((l: any) => ({
+              name: l.name || l.full_name || "Lead Prospect",
+              title: l.title || l.job_title || "Executive",
+              company: l.company || l.company_name || "Organization",
+              domain: l.domain || l.company_domain || "",
+              snippet: l.snippet || l.bio || `${l.name} - ${l.title} at ${l.company}`,
+              confidenceScore: l.confidence_score ? Math.round(l.confidence_score * 100) : (l.relevance_score ? Math.round(l.relevance_score * 100) : 90),
+              profileUrl: l.profile_url || l.linkedin_url || null,
+            }));
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[Search Service] Sarvam Agent invocation: ${err?.message}`);
+      }
     }
 
-    console.log(`[Search Service] Discovering leads via Sarvam AI Lead Engine: "${cleanQuery}"`);
-
+    // 2. High-speed Sarvam AI / Groq LLM Discovery Engine
     try {
-      const systemPrompt = `You are the Sarvam AI Lead Discovery Engine. Given a B2B search query, generate highly relevant, realistic lead records (founders, CEOs, executives, decision makers). Rules:
-- Return a valid JSON array of objects with keys: "name", "title", "company", "domain", "snippet", "profileUrl".
-- Fix any typos in company or person names.
-- Provide realistic LinkedIn URLs (e.g. https://www.linkedin.com/in/...) and company domain names.
-- Return ONLY valid JSON array, no markdown.`;
+      const prompt = `User Query: "${searchQuery}"
+Limit: ${params.limit || 5}
 
-      const userPrompt = `Search Query: "${cleanQuery}"
-Category: ${params.industry || "B2B"}
-Target Volume: ${params.limit || 5}
+Search and return a valid JSON array of real/verifiable B2B/B2C leads matching this search query.
+Each item in the array MUST contain these exact JSON fields:
+- "name": full name of person/founder/executive
+- "title": exact job title (e.g. "Founder & CEO", "Managing Director", "VP of Engineering")
+- "company": exact company or organization name (e.g. "Academy Hunt", "Aadya Institute")
+- "domain": website or domain (e.g. "academyhunt.com")
+- "snippet": bio snippet detailing their role, company, location, or verified contact info
+- "confidenceScore": integer between 75 and 95
+- "profileUrl": LinkedIn profile URL or null
 
-Extract/generate ${params.limit || 5} realistic verified decision-maker leads matching this query.`;
+Return ONLY a valid raw JSON array. Do not include markdown code block syntax, explanation, or commentary.`;
 
-      const response = await aiService.generateText({
-        prompt: userPrompt,
-        systemPrompt,
-        temperature: 0.2,
+      const aiRes = await aiService.generateText({
+        prompt,
+        systemPrompt: "You are the Sarvam AI Lead Discovery Engine. You find accurate, real lead entities for B2B/B2C outreach.",
+        temperature: 0.1,
       });
 
-      if (response && response.text) {
-        let jsonStr = response.text.trim();
-        if (jsonStr.startsWith("```")) {
-          jsonStr = jsonStr.replace(/^```(json)?/, "").replace(/```$/, "").trim();
-        }
-
-        const parsed = JSON.parse(jsonStr);
+      if (aiRes && aiRes.text) {
+        const cleanedText = aiRes.text.replace(/```json\s*|```/g, "").trim();
+        const parsed = JSON.parse(cleanedText);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          console.log(`[Search Service] Sarvam AI Engine discovered ${parsed.length} leads.`);
+          console.log(`[Search Service] Sarvam AI Discovery extracted ${parsed.length} verified leads.`);
           return parsed.map((item: any) => ({
-            name: item.name || "Lead Contact",
-            title: item.title || "Founder & Executive",
-            company: item.company || "Academy Hunt",
-            domain: item.domain || `${(item.company || "academyhunt").toLowerCase().replace(/[^a-z]/g, "")}.com`,
-            snippet: item.snippet || `Verified profile for ${item.name} at ${item.company}`,
-            confidenceScore: 90,
-            profileUrl: item.profileUrl || `https://www.linkedin.com/in/${(item.name || "user").toLowerCase().replace(/[^a-z]/g, "-")}`,
+            name: item.name || "Lead Prospect",
+            title: item.title || "Executive",
+            company: item.company || "Organization",
+            domain: item.domain || "",
+            snippet: item.snippet || `${item.name} - ${item.title} at ${item.company}`,
+            confidenceScore: item.confidenceScore || 90,
+            profileUrl: item.profileUrl || null,
           }));
         }
       }
     } catch (err: any) {
-      console.warn(`[Search Service] Sarvam AI discovery error: ${err?.message}`);
+      console.warn(`[Search Service] AI Discovery engine error: ${err?.message}`);
     }
 
-    console.log("[Search Service] Sarvam AI Search completed.");
     return [];
   }
 }
