@@ -142,9 +142,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         };
       });
 
-      // Auto-refresh the leads table so new leads appear immediately
+      // Auto-refresh the leads table so new leads appear immediately with the AI Answer Banner
       try {
-        await useLeadStore.getState().fetchLeads();
+        const answer = result.specificAnswer || result.searchSummary || null;
+        if (Array.isArray(result.leads) && result.leads.length > 0) {
+          useLeadStore.setState({ leads: result.leads, specificAnswer: answer });
+        } else {
+          await useLeadStore.getState().fetchLeads();
+          if (answer) {
+            useLeadStore.setState({ specificAnswer: answer });
+          }
+        }
       } catch { /* leads refresh is best-effort */ }
     } catch (err: any) {
       const errorTimestamp = new Date().toLocaleTimeString();
@@ -290,9 +298,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         ],
       }));
 
-      // Auto-refresh the leads table so new leads appear immediately
+      // Auto-refresh the leads table so new leads appear immediately with AI Answer Banner
       try {
-        await useLeadStore.getState().fetchLeads();
+        const answer = result.specificAnswer || result.searchSummary || null;
+        if (Array.isArray(result.leads) && result.leads.length > 0) {
+          useLeadStore.setState({ leads: result.leads, specificAnswer: answer });
+        } else {
+          await useLeadStore.getState().fetchLeads();
+          if (answer) {
+            useLeadStore.setState({ specificAnswer: answer });
+          }
+        }
       } catch { /* leads refresh is best-effort */ }
 
       // Refresh pipeline runs list

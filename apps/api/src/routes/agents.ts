@@ -76,7 +76,12 @@ agentsRouter.post("/run", async (req, res) => {
       rawQuery = rawQuery.replace(/\s+in\s+[A-Za-z0-9\s,]+$/i, "");
     }
 
-    const cleanQuery = rawQuery.trim();
+    let cleanQuery = rawQuery.trim();
+    // Normalize common typos in queries (e.g. "instiyute" -> "institute")
+    cleanQuery = cleanQuery
+      .replace(/\binstiyute\b/gi, "institute")
+      .replace(/\binstitite\b/gi, "institute")
+      .replace(/\bfoundrs\b/gi, "founders");
 
     const result = await orchestrator.runLeadGenerationPipeline({
       query: cleanQuery,
