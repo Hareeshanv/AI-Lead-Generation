@@ -23,10 +23,27 @@ export default function LeadsPage() {
   }, [fetchLeads]);
 
   const filteredLeads = leads.filter((lead) => {
-    const matchesQuery =
-      lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.title.toLowerCase().includes(searchQuery.toLowerCase());
+    if (!searchQuery.trim()) {
+      return selectedStatus === "All" || lead.status === selectedStatus;
+    }
+
+    const queryWords = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const matchesQuery = queryWords.every((word) => {
+      const normalizedWord = word.endsWith("s") && word.length > 3 ? word.slice(0, -1) : word;
+      const fields = [
+        lead.name.toLowerCase(),
+        lead.company.toLowerCase(),
+        lead.title.toLowerCase(),
+        lead.industry ? lead.industry.toLowerCase() : "",
+      ];
+      return fields.some((field) => 
+        field.includes(word) || 
+        field.includes(normalizedWord) ||
+        word.includes(field) ||
+        normalizedWord.includes(field)
+      );
+    });
+
     const matchesStatus = selectedStatus === "All" || lead.status === selectedStatus;
     return matchesQuery && matchesStatus;
   });

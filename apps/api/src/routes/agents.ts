@@ -69,7 +69,7 @@ agentsRouter.post("/run", async (req, res) => {
       targetCount = parseInt(volumeMatch[1], 10);
       rawQuery = rawQuery.replace(/\(Target:\s*\d+\s*leads\)/i, "");
     }
-
+    rawQuery = rawQuery.trim();
     const inLocationMatch = rawQuery.match(/\s+in\s+([A-Za-z0-9\s,]+)$/i);
     if (inLocationMatch && !location) {
       location = inLocationMatch[1].trim();
