@@ -22,6 +22,7 @@ export interface Lead {
   tags: string[];
   notesCount: number;
   activityCount: number;
+  profileUrl?: string;
 }
 
 export interface Company {

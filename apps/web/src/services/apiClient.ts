@@ -32,7 +32,7 @@ export const leadApi = {
         title: d.title || "Executive",
         company: d.company,
         email: d.email,
-        phone: d.phone || "+1 (555) 019-2831",
+        phone: d.phone || d.phone_number || "Not available",
         location: d.location || "San Francisco, CA",
         score: d.score || 85,
         status: d.status || "Hot",
@@ -48,6 +48,7 @@ export const leadApi = {
         tags: d.tags || ["AI Verified"],
         notesCount: d.notes_count || 1,
         activityCount: d.activity_count || 3,
+        profileUrl: d.profile_url || d.profileUrl || undefined,
       }));
     } catch (err: any) {
       console.warn("[leadApi] Failed to fetch leads from Supabase:", err?.message || "Unknown error");

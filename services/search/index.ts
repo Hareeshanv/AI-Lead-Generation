@@ -105,10 +105,12 @@ export class SearchProviderService {
     if (params.location) searchQuery += ` ${params.location}`;
     if (params.industry) searchQuery += ` ${params.industry}`;
 
-    // Target LinkedIn profile pages for people searches
-    const isContactOrCompanySearch = /contact|email|phone|website|academyhunt|address|coaching|company/i.test(params.query);
-    if (!isContactOrCompanySearch) {
-      searchQuery += " site:linkedin.com/in";
+    // Format search query to prioritize LinkedIn profiles and person search
+    const hasExplicitSite = params.query.includes("site:");
+    if (!hasExplicitSite) {
+      // Clean query by removing noise words for target search
+      const cleanQuery = params.query.replace(/\b(email|phone|contact|number|b2b|b2c|in|list|database)\b/gi, "").replace(/\s+/g, " ").trim();
+      searchQuery = `${cleanQuery} site:linkedin.com/in`;
     }
 
     console.log(`[Search Service] Performing LIVE web search: "${searchQuery}"`);
@@ -188,13 +190,14 @@ export class SearchProviderService {
 
         // ── Filter out non-person results ──
         const startsWithNumber = /^\d/.test(name);
-        const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an )/i.test(name);
+        const isArticleTitle = /^(how|why|what|where|when|which|can|do|does|should|is|are|the|a |an |find|contact|about)/i.test(name);
         const hasJobKeywords = /\b(jobs?\s+in|internship|fresher|hiring|vacancy|vacanc|openings?|career|recruitment|apply|placement)\b/i.test(name);
         const isSingleWordLocation = /^[A-Z][a-z]+$/.test(name) && /^(bangalore|bengaluru|mumbai|delhi|chennai|hyderabad|pune|kolkata|india|usa|london)$/i.test(name);
         const isTooLong = name.length > 60;
         const hasNumericCount = /^\d+\+?\s/.test(name);
+        const isGenericSeoTitle = /\b(decision maker|phone number|contact database|lead finder|email finder|b2b contact|b2b lead|contact us|database search|search engine|top \d+|best \d+)\b/i.test(name);
 
-        const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount;
+        const isDefinitelyNotPerson = startsWithNumber || isArticleTitle || hasJobKeywords || isSingleWordLocation || isTooLong || hasNumericCount || isGenericSeoTitle;
 
         // Skip non-person results unless it's a confirmed profile URL
         const isPersonProfileUrl = isLinkedInProfile || isGitHubProfile;
