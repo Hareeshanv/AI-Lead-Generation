@@ -151,8 +151,8 @@ export default function LeadsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredLeads.map((lead) => (
-                  <tr key={lead.id} className="hover:bg-card/40 transition-colors group">
+                filteredLeads.map((lead, idx) => (
+                  <tr key={lead.id ? `${lead.id}-${idx}` : `lead-row-${idx}`} className="hover:bg-card/40 transition-colors group">
                     <td className="py-3.5 px-4">
                       <div className="flex items-center gap-3">
                         <Avatar src={lead.avatar} name={lead.name} />
