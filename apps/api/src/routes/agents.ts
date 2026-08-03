@@ -53,9 +53,9 @@ agentsRouter.post("/run", async (req, res) => {
   try {
     const {
       query = "Fintech Engineering Executives",
-      industry = "Fintech & Payments",
+      industry = req.body.query ? req.body.industry : (req.body.industry || "Fintech & Payments"),
       category = "B2B",
-      location = "San Francisco, CA",
+      location = req.body.query ? req.body.location : (req.body.location || "San Francisco, CA"),
       targetCount = 50,
     } = req.body;
 

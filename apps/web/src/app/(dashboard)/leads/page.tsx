@@ -12,7 +12,7 @@ import { Search, Filter, Download, Upload, Plus, Flame, Eye, Trash2, Mail, Phone
 import Link from "next/link";
 
 export default function LeadsPage() {
-  const { leads, searchQuery, setSearchQuery, selectedStatus, setSelectedStatus, fetchLeads, isLoading } = useLeadStore();
+  const { leads, searchQuery, setSearchQuery, selectedStatus, setSelectedStatus, fetchLeads, isLoading, runPipeline, specificAnswer } = useLeadStore();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newLeadName, setNewLeadName] = useState("");
   const [newLeadCompany, setNewLeadCompany] = useState("");
@@ -63,6 +63,9 @@ export default function LeadsPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          <Button variant="secondary" size="sm" onClick={() => runPipeline(searchQuery)}>
+            Run AI Search
+          </Button>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
           {["All", "Hot", "Warm", "Cold"].map((status) => (
@@ -80,6 +83,28 @@ export default function LeadsPage() {
           ))}
         </div>
       </div>
+
+      {/* Sarvam AI Specific Agent Answer Banner */}
+      {specificAnswer && (
+        <div className="p-4 rounded-xl glass-panel border border-indigo-500/30 bg-gradient-to-r from-indigo-950/40 via-purple-950/20 to-slate-950/40 shadow-lg">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400 mt-0.5">
+              <Users className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-foreground">Sarvam AI Agent Specific Answer</h3>
+                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  Targeted Result
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {specificAnswer}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lead Table */}
       <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden shadow-xl">

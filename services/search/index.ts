@@ -24,8 +24,12 @@ export interface DiscoveredLeadSearchResult {
 export class SearchProviderService {
   async discoverLeads(params: SearchQuery): Promise<DiscoveredLeadSearchResult[]> {
     let searchQuery = params.query;
-    if (params.location) searchQuery += ` ${params.location}`;
-    if (params.industry) searchQuery += ` ${params.industry}`;
+    if (params.location && params.location !== "Global" && !params.query.toLowerCase().includes(params.location.toLowerCase())) {
+      searchQuery += ` ${params.location}`;
+    }
+    if (params.industry && params.industry !== "Technology" && !params.query.toLowerCase().includes(params.industry.toLowerCase())) {
+      searchQuery += ` ${params.industry}`;
+    }
 
     console.log(`[Search Service] Performing Sarvam AI Lead Discovery: "${searchQuery}"`);
 

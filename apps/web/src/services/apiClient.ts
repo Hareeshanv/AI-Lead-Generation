@@ -1,6 +1,6 @@
 import axios from "axios";
 import { supabase } from "@/lib/supabase";
-import { mockLeads, mockCompanies, mockAgents, mockWorkflows, mockCampaigns, mockDeals, mockAnalyticsData, mockContacts } from "@/lib/mockData";
+import { mockCompanies, mockAgents, mockWorkflows, mockCampaigns, mockDeals, mockAnalyticsData, mockContacts } from "@/lib/mockData";
 import { Lead, Company, AgentStatus, Workflow, Campaign, Deal, Contact } from "@/types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
@@ -19,8 +19,8 @@ export const leadApi = {
     try {
       const { data, error } = await supabase.from("leads").select("*").order("created_at", { ascending: false });
       if (error) {
-        console.warn("[leadApi] Supabase query error:", error.message, "— falling back to local data");
-        return mockLeads;
+        console.warn("[leadApi] Supabase query error:", error.message);
+        return [];
       }
       if (!data || data.length === 0) {
         console.log("[leadApi] No leads found in Supabase database.");
@@ -52,7 +52,7 @@ export const leadApi = {
       }));
     } catch (err: any) {
       console.warn("[leadApi] Failed to fetch leads from Supabase:", err?.message || "Unknown error");
-      return mockLeads;
+      return [];
     }
   },
 
@@ -115,29 +115,31 @@ export const leadApi = {
         notesCount: 0,
         activityCount: 1,
       };
-    } catch {
+    } catch (err: any) {
+      console.warn("[leadApi] createLead failed:", err?.message || err);
+      // Do NOT fabricate contact details. Return a minimal record with null contact fields.
       return {
         id: `lead-${Date.now()}`,
         name: lead.name || "New Prospect",
-        title: lead.title || "Executive",
-        company: lead.company || "Enterprise Corp",
-        email: lead.email || "contact@enterprise.io",
-        phone: "+1 (555) 234-5678",
-        location: "San Francisco, CA",
-        score: 85,
-        status: "Hot",
-        source: "Manual Entry",
-        owner: "Alex Sterling",
-        avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80",
-        industry: "Technology",
-        companySize: "100 - 500",
-        annualRevenue: "$25M",
-        techStack: ["React", "Node.js"],
+        title: lead.title || "Decision Maker",
+        company: lead.company || "Unknown Company",
+        email: lead.email || "Not available",
+        phone: lead.phone || "Not available",
+        location: lead.location || "San Francisco, CA",
+        score: lead.score || 0,
+        status: lead.status || "New",
+        source: lead.source || "Manual Entry",
+        owner: lead.owner || "Alex Sterling",
+        avatar: lead.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
+        industry: lead.industry || "Technology",
+        companySize: "10 - 50",
+        annualRevenue: "N/A",
+        techStack: lead.techStack || [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        tags: ["Manual Lead"],
+        tags: [],
         notesCount: 0,
-        activityCount: 1,
+        activityCount: 0,
       };
     }
   },
@@ -216,8 +218,8 @@ export const agentApi = {
       const response = await apiClient.post("/agents/run", { query, agentId });
       return response.data;
     } catch (err: any) {
-      console.warn("Backend API trigger fallback:", err?.message);
-      return { success: true, message: `Simulated trigger for agent ${agentId}` };
+      console.warn("Backend API trigger failed:", err?.message);
+      return { success: false, simulated: true, error: err?.message };
     }
   },
 

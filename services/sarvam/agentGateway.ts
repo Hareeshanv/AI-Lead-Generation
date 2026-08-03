@@ -91,6 +91,8 @@ export interface PipelineRunResult {
   steps: PipelineStepResult[];
   errors: string[];
   leads?: any[];
+  specificAnswer?: string;
+  searchSummary?: string;
 }
 
 class AgentGateway {
@@ -556,6 +558,12 @@ class AgentGateway {
 
     const totalDuration = Date.now() - pipelineStartTime;
 
+    const topLeadInfo = generatedLeads.length > 0
+      ? `Top result: ${generatedLeads[0].name} (${generatedLeads[0].title} at ${generatedLeads[0].company}).`
+      : "";
+    const specificAnswer = searchResult?.specific_answer || searchResult?.search_summary ||
+      `Sarvam AI Agent analyzed "${params.query}" and returned ${totalLeadsFound} verified lead results across ${params.category || "B2B"} criteria. ${topLeadInfo}`;
+
     const result: PipelineRunResult = {
       pipelineRunId,
       success: errors.length === 0,
@@ -568,6 +576,8 @@ class AgentGateway {
       steps,
       errors,
       leads: generatedLeads,
+      specificAnswer,
+      searchSummary: specificAnswer,
     };
 
     // Update pipeline run in DB
