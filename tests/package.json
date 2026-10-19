@@ -1,0 +1,23 @@
+{
+  "name": "@ai-lead-gen/tests",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:api": "vitest run --project api",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@supabase/supabase-js": "^2.114.0",
+    "@types/node": "^20.11.30",
+    "@types/supertest": "^6.0.2",
+    "dotenv": "^16.4.5",
+    "supertest": "^7.0.0",
+    "typescript": "^5.4.3",
+    "vitest": "^3.2.4"
+  }
+}

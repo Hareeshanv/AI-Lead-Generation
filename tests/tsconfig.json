@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@ai-lead-gen/database": ["../packages/database/src/index.ts"],
+      "@/*": ["../apps/web/src/*"]
+    }
+  },
+  "include": ["unit/**/*", "api/**/*", "e2e/**/*", "*.ts"]
+}
