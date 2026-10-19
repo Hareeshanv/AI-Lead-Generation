@@ -1,25 +1,29 @@
-import { Router } from "express";
-import { dbClient } from "@ai-lead-gen/database";
+import { dbClient, isDbConfigured } from "@ai-lead-gen/database";
+import { createRouter } from "../http/router";
+import { registeredJobTypes } from "../jobs/registry";
 
-export const healthRouter = Router();
+/** Mounted at /api/health without auth; never returns data or secrets. */
+export const healthRouter = createRouter();
 
 healthRouter.get("/", async (_req, res) => {
-  let dbStatus = "connected";
-  try {
-    const { error } = await dbClient.from("leads").select("id").limit(1);
-    if (error) {
-      dbStatus = `error: ${error.message}`;
+  let database = "connected";
+  if (!isDbConfigured) {
+    database = "not_configured";
+  } else {
+    try {
+      const { error } = await dbClient.from("organizations").select("id", { head: true, count: "exact" }).limit(1);
+      if (error) database = "error";
+    } catch {
+      database = "error";
     }
-  } catch (err: any) {
-    dbStatus = `exception: ${err.message}`;
   }
 
-  res.json({
-    status: "online",
+  res.status(database === "connected" ? 200 : 503).json({
+    status: database === "connected" ? "online" : "degraded",
     timestamp: new Date().toISOString(),
-    service: "AI Lead Generation API Engine",
+    service: "AI Lead Generation API",
     version: "0.1.0",
-    database: dbStatus,
-    activeAgents: 14,
+    database,
+    jobHandlers: registeredJobTypes(),
   });
 });

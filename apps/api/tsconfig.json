@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": ["ES2022"],
     "module": "commonjs",
-    "outDir": "dist",
-    "rootDir": "../..",
+    "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "moduleResolution": "node",
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
       "@ai-lead-gen/database": ["../../packages/database/src/index.ts"]

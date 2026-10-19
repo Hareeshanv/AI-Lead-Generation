@@ -1,237 +1,238 @@
-import { Router } from "express";
-import { orchestrator } from "../../../../agents/orchestrator";
-import { agentGateway } from "../../../../services/sarvam/agentGateway";
-import { dbQueries } from "@ai-lead-gen/database";
+import { z } from "zod";
+import { agentsDb, type AgentExecutionRow, type PipelineRunRow } from "@ai-lead-gen/database";
+import { DISCOVERY_AGENT_ID, DISCOVERY_AGENT_NAME, STEPS } from "../../../../services/discovery/agent";
+import {
+  computeRunStats,
+  DEFAULT_MAX_RESULTS,
+  DISCOVERY_SOURCES,
+  MAX_RESULTS_LIMIT,
+  type RunTotals,
+} from "../../../../services/discovery/postprocess";
+import { agentConfigStatus, agentRunLimit, failStaleRuns, runSources, startDiscoveryRun } from "../agents/discovery";
+import { createRouter } from "../http/router";
+import { HttpError } from "../http/errors";
+import { parsePagination, send, sendPage } from "../http/pagination";
+import { parse } from "../http/validate";
+import { getCtx } from "../middleware/auth";
 
-export const agentsRouter = Router();
+/** Mounted at /api/agents behind requireAuth(); owned by the AI Agents module. */
+export const agentsRouter = createRouter();
 
-// ═══════════════════════════════════════════
-// GET /api/agents — List all 14 agents with status
-// ═══════════════════════════════════════════
+export const runDiscoverySchema = z
+  .object({
+    query: z.string().trim().min(2, "Enter what to search for").max(200),
+    location: z.string().trim().min(2, "Enter a city or area").max(120),
+    sources: z
+      .array(z.enum(DISCOVERY_SOURCES))
+      .min(1, "Pick at least one source")
+      .default([...DISCOVERY_SOURCES])
+      .transform((s) => Array.from(new Set(s))),
+    maxResults: z.coerce.number().int().min(1).max(MAX_RESULTS_LIMIT).default(DEFAULT_MAX_RESULTS),
+  })
+  .strict();
 
-agentsRouter.get("/", async (_req, res) => {
-  try {
-    // Try to fetch from database first
-    const dbAgents = await dbQueries.getAllAgentStatuses();
-
-    // Get gateway configuration status for each agent
-    const gatewayAgents = agentGateway.getAllAgents();
-
-    // Merge DB data with gateway configuration
-    const agents = gatewayAgents.map((gAgent) => {
-      const dbAgent = dbAgents.find((d: any) => d.id === gAgent.id);
-      return {
-        id: gAgent.id,
-        name: dbAgent?.name || gAgent.name,
-        type: dbAgent?.type || "AI Agent",
-        status: gAgent.configured ? "active" : (dbAgent?.status || "idle"),
-        description: dbAgent?.description || `${gAgent.name} agent`,
-        sarvam_configured: gAgent.configured,
-        sarvam_agent_id: gAgent.sarvamId,
-        running_jobs: dbAgent?.running_jobs || 0,
-        success_rate: dbAgent?.success_rate || 99.0,
-        total_executions: dbAgent?.total_executions || 0,
-        avg_latency: dbAgent?.avg_latency || "500ms",
-        model: dbAgent?.model || "gpt-4o",
-        temperature: dbAgent?.temperature || 0.2,
-        concurrency: dbAgent?.concurrency || 10,
-      };
-    });
-
-    res.json({ success: true, count: agents.length, agents });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || "Failed to fetch agents" });
-  }
+const statsQuery = z.object({ days: z.coerce.number().int().min(1).max(365).optional() });
+const logsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  before: z.string().datetime({ offset: true }).optional(),
+  runId: z.string().regex(/^[\w-]{1,64}$/, "Invalid run id").optional(),
+});
+const runListQuery = z.object({
+  status: z.enum(["queued", "running", "completed", "completed_with_errors", "failed"]).optional(),
 });
 
-// ═══════════════════════════════════════════
-// POST /api/agents/run — Run the full pipeline
-// (MUST be before /:id routes to avoid matching "run" as an agent ID)
-// ═══════════════════════════════════════════
+const AGENT_DESCRIPTION =
+  "Finds leads for any business niche in a city: public posts from people asking for your product or service " +
+  "(web) and public business listings from Google Maps (places). Sarvam scores every result and duplicates of " +
+  "existing leads are skipped. Personal phone numbers and emails are never collected, except when the author " +
+  "published one in a post asking to be contacted.";
 
-agentsRouter.post("/run", async (req, res) => {
-  try {
-    let rawQuery = req.body.query || "Fintech Engineering Executives";
-    let location = req.body.location || "";
-    let category = req.body.category || "B2B";
-    let targetCount = req.body.targetCount ? Number(req.body.targetCount) : 50;
-    let industry = req.body.industry || "";
+function requireAgent(id: string) {
+  if (id !== DISCOVERY_AGENT_ID) throw HttpError.notFound("Agent");
+}
 
-    // Parse formatted queries like "[B2B] Aadya institite founders in bengaluru (Target: 50 leads)"
-    const categoryMatch = rawQuery.match(/^\[(B2B|B2C)\]\s*/i);
-    if (categoryMatch) {
-      category = categoryMatch[1].toUpperCase();
-      rawQuery = rawQuery.replace(/^\[(B2B|B2C)\]\s*/i, "");
-    }
+function parseRunId(value: unknown): string {
+  if (typeof value !== "string" || !/^[\w-]{1,64}$/.test(value)) throw HttpError.badRequest("Invalid run id.");
+  return value;
+}
 
-    const volumeMatch = rawQuery.match(/\(Target:\s*(\d+)\s*leads\)/i);
-    if (volumeMatch) {
-      targetCount = parseInt(volumeMatch[1], 10);
-      rawQuery = rawQuery.replace(/\(Target:\s*\d+\s*leads\)/i, "");
-    }
-    rawQuery = rawQuery.trim();
-    const inLocationMatch = rawQuery.match(/\s+in\s+([A-Za-z0-9\s,]+)$/i);
-    if (inLocationMatch && !location) {
-      location = inLocationMatch[1].trim();
-      rawQuery = rawQuery.replace(/\s+in\s+[A-Za-z0-9\s,]+$/i, "");
-    }
+function toRunDto(run: PipelineRunRow, totals?: RunTotals & { duplicates?: number; errors?: string[] }) {
+  return {
+    id: run.id,
+    agentId: DISCOVERY_AGENT_ID,
+    query: run.query,
+    location: run.location,
+    sources: runSources(run),
+    maxResults: run.target_count,
+    status: run.status,
+    resultsFound: run.total_leads_found ?? 0,
+    highScore: run.high_score_leads ?? 0,
+    leadsCreated: totals?.leadsCreated ?? null,
+    signalsSaved: totals?.signalsSaved ?? null,
+    duplicates: totals?.duplicates ?? null,
+    errorCount: totals?.errors?.length ?? null,
+    durationMs: run.duration_ms,
+    startedAt: run.started_at,
+    completedAt: run.completed_at,
+    createdAt: run.created_at,
+  };
+}
 
-    let cleanQuery = rawQuery.trim();
-    // Normalize common typos in queries (e.g. "instiyute" -> "institute")
-    cleanQuery = cleanQuery
-      .replace(/\binstiyute\b/gi, "institute")
-      .replace(/\binstitite\b/gi, "institute")
-      .replace(/\bfoundrs\b/gi, "founders");
+function toStepDto(e: AgentExecutionRow) {
+  const { leadIds, signalIds, ...output } = e.output || {};
+  return {
+    id: e.id,
+    step: e.agent_id,
+    name: e.agent_name,
+    status: e.status,
+    input: e.input,
+    output: e.output ? output : null,
+    error: e.error,
+    durationMs: e.duration_ms,
+    tokensUsed: e.tokens_used,
+    startedAt: e.started_at,
+    completedAt: e.completed_at,
+  };
+}
 
-    const result = await orchestrator.runLeadGenerationPipeline({
-      query: cleanQuery,
-      industry: industry || undefined,
-      category: (category === "B2C" ? "B2C" : "B2B"),
-      location: location || undefined,
-      targetCount,
-    });
+function totalsOf(output: Record<string, any> | null | undefined) {
+  if (!output) return undefined;
+  return {
+    leadsCreated: Number(output.leadsCreated) || 0,
+    signalsSaved: Number(output.signalsSaved) || 0,
+    duplicates: Number(output.duplicates) || 0,
+    errors: Array.isArray(output.errors) ? output.errors.map(String) : [],
+  };
+}
 
-    res.json(result);
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || "Pipeline execution failed" });
+async function totalsByRun(orgId: string, runIds: string[]) {
+  const saves = await agentsDb.listStepExecutions(orgId, STEPS.save, runIds);
+  const map = new Map<string, NonNullable<ReturnType<typeof totalsOf>>>();
+  for (const s of saves) {
+    const t = totalsOf(s.output);
+    if (t) map.set(s.pipeline_run_id, t);
   }
+  return map;
+}
+
+async function agentStats(orgId: string, days?: number) {
+  const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : undefined;
+  const runs = await agentsDb.listRunStats(orgId, { since });
+  const totals = await totalsByRun(
+    orgId,
+    runs.map((r) => r.id)
+  );
+  return { ...computeRunStats(runs, totals as Map<string, RunTotals>), days: days ?? null };
+}
+
+async function agentDto(orgId: string, withStats: boolean) {
+  const [config, active] = await Promise.all([agentConfigStatus(orgId), agentsDb.countActiveRuns(orgId)]);
+  const configured = config.serperConfigured && config.sarvamConfigured;
+  return {
+    id: DISCOVERY_AGENT_ID,
+    name: DISCOVERY_AGENT_NAME,
+    type: "AI Agent",
+    description: AGENT_DESCRIPTION,
+    status: active > 0 ? "running" : configured ? "active" : "not_configured",
+    activeRuns: active,
+    sources: [...DISCOVERY_SOURCES],
+    maxResultsLimit: MAX_RESULTS_LIMIT,
+    defaultMaxResults: DEFAULT_MAX_RESULTS,
+    ...config,
+    stats: withStats ? await agentStats(orgId) : null,
+  };
+}
+
+// GET /api/agents — the agent catalog (one unified discovery agent)
+agentsRouter.get("/", async (req, res) => {
+  const { orgId } = getCtx(req);
+  await failStaleRuns(orgId);
+  send(res, [await agentDto(orgId, true)]);
 });
 
-// ═══════════════════════════════════════════
-// Pipeline Run Routes
-// (MUST be before /:id routes to avoid "pipeline" matching as an agent ID)
-// ═══════════════════════════════════════════
-
-// GET /api/agents/pipeline/runs — List recent pipeline runs
-agentsRouter.get("/pipeline/runs", async (_req, res) => {
-  try {
-    const runs = await dbQueries.getPipelineRuns(20);
-    res.json({ success: true, count: runs.length, runs });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message });
-  }
-});
-
-// GET /api/agents/pipeline/runs/:runId — Get pipeline run detail
-agentsRouter.get("/pipeline/runs/:runId", async (req, res) => {
-  try {
-    const runId = req.params.runId;
-    const run = await dbQueries.getPipelineRunById(runId);
-    if (!run) {
-      return res.status(404).json({ success: false, message: "Pipeline run not found" });
-    }
-
-    const executions = await dbQueries.getAgentExecutions(runId);
-
-    res.json({
-      success: true,
-      run,
-      agent_executions: executions,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message });
-  }
-});
-
-// ═══════════════════════════════════════════
-// GET /api/agents/:id — Get single agent details
-// (After all static routes above)
-// ═══════════════════════════════════════════
-
+// GET /api/agents/:id
 agentsRouter.get("/:id", async (req, res) => {
-  try {
-    const agentId = req.params.id;
-    const agent = await dbQueries.getAgentStatus(agentId);
-
-    const isConfigured = agentGateway.isConfigured(agentId);
-    const agentName = agentGateway.getAgentName(agentId);
-
-    if (!agent) {
-      return res.json({
-        success: true,
-        agent: {
-          id: agentId,
-          name: agentName,
-          sarvam_configured: isConfigured,
-          status: isConfigured ? "active" : "idle",
-        },
-      });
-    }
-
-    res.json({
-      success: true,
-      agent: {
-        ...agent,
-        sarvam_configured: isConfigured,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message });
-  }
+  requireAgent(req.params.id);
+  const { orgId } = getCtx(req);
+  await failStaleRuns(orgId);
+  send(res, await agentDto(orgId, true));
 });
 
-// ═══════════════════════════════════════════
-// POST /api/agents/:id/trigger — Trigger a single agent
-// ═══════════════════════════════════════════
-
-agentsRouter.post("/:id/trigger", async (req, res) => {
-  try {
-    const agentId = req.params.id;
-    const input = req.body;
-
-    if (!agentGateway.isConfigured(agentId)) {
-      return res.status(400).json({
-        success: false,
-        message: `Agent ${agentId} is not configured on Sarvam AI. Add the agent ID to your .env file.`,
-      });
-    }
-
-    const result = await agentGateway.runAgent(agentId, input);
-
-    if (result && result.success) {
-      res.json({
-        success: true,
-        agent_id: agentId,
-        agent_name: agentGateway.getAgentName(agentId),
-        output: result.output,
-        execution_id: result.executionId,
-        duration_ms: result.durationMs,
-        tokens_used: result.tokensUsed,
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        agent_id: agentId,
-        error: result?.error || "Agent invocation failed",
-      });
-    }
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message || "Agent trigger failed" });
-  }
+// GET /api/agents/:id/stats?days= — runs, success rate, average duration, leads/signals found
+agentsRouter.get("/:id/stats", async (req, res) => {
+  requireAgent(req.params.id);
+  const { days } = parse(statsQuery, req.query);
+  send(res, await agentStats(getCtx(req).orgId, days));
 });
 
-// ═══════════════════════════════════════════
-// GET /api/agents/:id/logs — Get agent execution logs
-// ═══════════════════════════════════════════
-
+// GET /api/agents/:id/logs?limit=&before=&runId= — newest first
 agentsRouter.get("/:id/logs", async (req, res) => {
-  try {
-    const agentId = req.params.id;
+  requireAgent(req.params.id);
+  const { limit, before, runId } = parse(logsQuery, req.query);
+  const logs = await agentsDb.listLogs(getCtx(req).orgId, req.params.id, { limit, before, runId });
+  send(
+    res,
+    logs.map((l) => ({ id: l.id, level: l.level, message: l.message, createdAt: l.created_at }))
+  );
+});
 
-    const { dbClient } = require("@ai-lead-gen/database");
-    const { data, error } = await dbClient
-      .from("agent_logs")
-      .select("*")
-      .eq("agent_id", agentId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+// POST /api/agents/:id/runs — body {query, location, sources?, maxResults?}; 202 with the queued run
+agentsRouter.post("/:id/runs", agentRunLimit, async (req, res) => {
+  requireAgent(req.params.id);
+  const { orgId, userId } = getCtx(req);
+  const input = parse(runDiscoverySchema, req.body);
+  const run = await startDiscoveryRun(orgId, userId, input);
+  send(res, toRunDto(run), 202);
+});
 
-    if (error) {
-      return res.json({ success: true, logs: [] });
-    }
+// GET /api/agents/:id/runs?page=&pageSize=&sort=&status= — run history
+agentsRouter.get("/:id/runs", async (req, res) => {
+  requireAgent(req.params.id);
+  const { orgId } = getCtx(req);
+  const page = parsePagination(req.query, {
+    sortable: { createdAt: "created_at", durationMs: "duration_ms", resultsFound: "total_leads_found", status: "status" },
+    defaultSort: "createdAt:desc",
+  });
+  const { status } = parse(runListQuery, { status: req.query.status || undefined });
+  await failStaleRuns(orgId);
+  const { rows, total } = await agentsDb.listRuns(orgId, page, { status });
+  const totals = await totalsByRun(
+    orgId,
+    rows.map((r) => r.id)
+  );
+  sendPage(
+    res,
+    rows.map((r) => toRunDto(r, totals.get(r.id))),
+    total,
+    page
+  );
+});
 
-    res.json({ success: true, count: data?.length || 0, logs: data || [] });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err?.message });
-  }
+// GET /api/agents/:id/runs/:runId — run detail: steps, errors, created leads and saved signals
+agentsRouter.get("/:id/runs/:runId", async (req, res) => {
+  requireAgent(req.params.id);
+  const { orgId } = getCtx(req);
+  const runId = parseRunId(req.params.runId);
+  const run = await agentsDb.getRun(orgId, runId);
+  if (!run) throw HttpError.notFound("Run");
+  const executions = await agentsDb.listExecutions(orgId, runId);
+  const save = executions.find((e) => e.agent_id === STEPS.save);
+  const totals = totalsOf(save?.output);
+  const leadIds: string[] = Array.isArray(save?.output?.leadIds) ? save!.output!.leadIds.map(String) : [];
+  const signalIds: string[] = Array.isArray(save?.output?.signalIds) ? save!.output!.signalIds.map(String) : [];
+  const [leads, signals] = await Promise.all([agentsDb.getLeadsByIds(orgId, leadIds), agentsDb.getSignalsByIds(orgId, signalIds)]);
+  const errors = totals?.errors?.length
+    ? totals.errors
+    : executions.filter((e) => e.error).map((e) => `${e.agent_name}: ${e.error}`);
+  send(res, {
+    run: toRunDto(run, totals),
+    steps: executions.map(toStepDto),
+    errors,
+    leads: leads.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0)),
+    signals: signals.sort(
+      (a, b) =>
+        Number(Boolean(b.contact_requested)) - Number(Boolean(a.contact_requested)) ||
+        Number(b.intent_score ?? 0) - Number(a.intent_score ?? 0)
+    ),
+  });
 });
