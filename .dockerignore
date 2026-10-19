@@ -1,0 +1,29 @@
+# Images build from the repo root (see apps/api/Dockerfile, apps/web/Dockerfile); keep the context small.
+**/node_modules
+**/dist
+**/.next
+**/.next-*
+**/.turbo
+**/*.tsbuildinfo
+**/coverage
+
+# Secrets and local state never go into an image
+**/.env
+**/.env.*
+!.env.example
+.git
+.github
+.jetro
+.agents
+.cursor
+.vscode
+.idea
+.mcp.json
+data
+projects
+supabase/.temp
+supabase/.branches
+
+tests/e2e/.auth
+tests/e2e/.results
+tests/e2e/.report

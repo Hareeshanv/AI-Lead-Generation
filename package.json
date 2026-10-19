@@ -2,23 +2,39 @@
   "name": "ai-lead-generation",
   "version": "0.1.0",
   "private": true,
-  "description": "Enterprise AI Lead Generation & Outreach Engine Monorepo",
+  "description": "B2B lead discovery, scoring, outreach and CRM (Next.js + Express + Supabase)",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
     "preview": "pnpm --filter @ai-lead-gen/web preview",
-    "lint": "turbo run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
-    "test": "turbo run test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "pnpm --filter @ai-lead-gen/tests test:unit",
+    "test:api": "pnpm --filter @ai-lead-gen/tests test:api",
+    "test:e2e": "pnpm --filter @ai-lead-gen/tests test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,json,md,yml,yaml}\"",
     "clean": "turbo run clean"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "15.5.28",
+    "globals": "^16.5.0",
     "prettier": "^3.2.5",
-    "turbo": "^1.13.0",
-    "typescript": "^5.4.0"
+    "turbo": "^2.11.9",
+    "typescript": "^5.4.0",
+    "typescript-eslint": "^8.72.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.18": "^8.5.18"
+    }
   },
   "engines": {
-    "node": ">=18.0.0",
+    "node": ">=20.0.0",
     "pnpm": ">=8.0.0"
   },
   "packageManager": "pnpm@8.15.0"

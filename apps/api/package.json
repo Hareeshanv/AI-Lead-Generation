@@ -4,24 +4,26 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --tsconfig=tsconfig.json --sourcemap --outfile=dist/index.js --log-level=warning",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "tsx src/index.ts"
+    "start": "node --enable-source-maps dist/index.js",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@ai-lead-gen/database": "workspace:*",
-    "axios": "^1.6.8",
+    "axios": "^1.20.0",
     "cors": "^2.8.5",
     "cron-parser": "^5.10.2",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "tsx": "^4.7.1",
+    "express": "^4.22.3",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.11.30",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.7.1",
     "typescript": "^5.4.3"
   }
 }

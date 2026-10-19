@@ -1,0 +1,28 @@
+node_modules
+pnpm-lock.yaml
+dist
+build
+out
+coverage
+.turbo
+.next
+.next-*
+next-env.d.ts
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+
+# Generated / local state
+supabase/.temp
+supabase/.branches
+tests/e2e/.auth
+tests/e2e/.results
+tests/e2e/.report
+.jetro
+.agents
+data
+projects
+
+# SQL migrations are applied as written; never reformat applied files.
+supabase/migrations

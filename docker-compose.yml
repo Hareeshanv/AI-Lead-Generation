@@ -1,40 +1,42 @@
-version: '3.8'
+# Runs the API and web app in containers against a Supabase project (hosted, or local via `npx supabase start`).
+# The database, auth and the lead-webhook edge function are Supabase's; nothing else is needed.
+#
+#   cp .env.example .env    # fill in SUPABASE_*, NEXT_PUBLIC_*, CAMPAIGN_UNSUBSCRIBE_SECRET, ...
+#   docker compose up --build
+#
+# Intended for a hosted Supabase project. With a local stack, containers cannot reach 127.0.0.1 on the
+# host: set SUPABASE_URL=http://host.docker.internal:54321 for the API, and run the web app with
+# `pnpm --filter @ai-lead-gen/web dev` (its server-side auth calls use NEXT_PUBLIC_SUPABASE_URL too).
 
 services:
-  postgres:
-    image: ankane/pgvector:v0.5.1
-    container_name: ai_lead_gen_db
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: .env
     environment:
-      POSTGRES_DB: ai_lead_gen
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgrespassword
+      NODE_ENV: production
+      PORT: "4000"
     ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - "4000:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    # Lets running jobs finish (or requeue) on shutdown; the API exits within 28s.
+    stop_grace_period: 30s
 
-  redis:
-    image: redis:7-alpine
-    container_name: ai_lead_gen_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-  minio:
-    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
-    container_name: ai_lead_gen_storage
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?set NEXT_PUBLIC_SUPABASE_URL in .env}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?set NEXT_PUBLIC_SUPABASE_ANON_KEY in .env}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api}
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpassword
+      PORT: "3000"
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
