@@ -4,6 +4,12 @@
 //   POST (X-Hub-Signature-256)                                        Meta leadgen event
 //   POST ?source=google&source_id=<lead_sources.id>                   Google Ads lead form
 //
+// Meta: without a query string the platform app (META_APP_SECRET / META_VERIFY_TOKEN) is used.
+// A workspace with its own Meta app points the app's webhook at `?org_id=<workspace id>`; its
+// stored "meta" integration secret then verifies the request and only its lead sources are used.
+//
+// Failures that may succeed later return 5xx so Meta / Google redeliver; saving is idempotent.
+//
 // verify_jwt is disabled for this function (see supabase/config.toml); requests are
 // authenticated by the Meta app-secret signature or the per-source Google key instead.
 
@@ -124,8 +130,38 @@ async function saveLead(raw: RawAdLead, sourceId: string, orgId: string): Promis
 
 // ---------------------------------------------------------------- Meta
 
-function handleMetaVerify(url: URL): Response {
-  const verifyToken = Deno.env.get("META_VERIFY_TOKEN");
+/** A failure that redelivery cannot fix (e.g. the lead was deleted); logged, not retried. */
+class PermanentError extends Error {}
+
+interface MetaApp {
+  appSecret: string;
+  verifyToken: string | null;
+  /** Set for a workspace's own app: only that workspace's lead sources are used. */
+  orgId: string | null;
+}
+
+/** The platform app, or the workspace's own app for `?org_id=`; null when not configured. */
+async function resolveMetaApp(url: URL): Promise<MetaApp | null> {
+  const orgId = url.searchParams.get("org_id");
+  if (orgId === null) {
+    const appSecret = Deno.env.get("META_APP_SECRET");
+    return appSecret ? { appSecret, verifyToken: Deno.env.get("META_VERIFY_TOKEN") ?? null, orgId: null } : null;
+  }
+  if (!UUID_RE.test(orgId)) return null;
+  const { data, error } = await supabase.rpc("get_integration_secret", { p_org_id: orgId, p_provider: "meta" });
+  if (error) throw error;
+  if (typeof data !== "string" || !data) return null;
+  try {
+    const secrets = JSON.parse(data) as { appSecret?: string; verifyToken?: string };
+    return secrets.appSecret ? { appSecret: secrets.appSecret, verifyToken: secrets.verifyToken || null, orgId } : null;
+  } catch {
+    await logToAgent("error", `[lead-webhook] Meta integration secret for workspace ${orgId} is not valid JSON`);
+    return null;
+  }
+}
+
+async function handleMetaVerify(url: URL): Promise<Response> {
+  const verifyToken = (await resolveMetaApp(url))?.verifyToken;
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token") ?? "";
   const challenge = url.searchParams.get("hub.challenge") ?? "";
@@ -161,12 +197,15 @@ async function fetchMetaLead(leadgenId: string, token: string, appSecret: string
   const res = await fetch(`${GRAPH_API}/${encodeURIComponent(leadgenId)}?${params}`);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(`Graph API ${res.status}: ${body?.error?.message ?? "unknown error"}`);
+    const message = `Graph API ${res.status}: ${body?.error?.message ?? "unknown error"}`;
+    // 4xx (bad id, deleted lead, missing permission) will not change on redelivery; 429 and 5xx may.
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new PermanentError(message);
+    throw new Error(message);
   }
   return body as MetaGraphLead;
 }
 
-async function processMetaChange(value: MetaLeadgenValue, appSecret: string): Promise<void> {
+async function processMetaChange(value: MetaLeadgenValue, app: MetaApp): Promise<void> {
   const leadgenId = value.leadgen_id;
   const pageId = value.page_id;
   if (!leadgenId || !pageId) {
@@ -174,12 +213,13 @@ async function processMetaChange(value: MetaLeadgenValue, appSecret: string): Pr
     return;
   }
 
-  const { data: source, error } = await supabase
+  let query = supabase
     .from("lead_sources")
     .select(SOURCE_COLUMNS)
     .eq("platform", "meta")
-    .eq("external_page_id", pageId)
-    .maybeSingle<LeadSource>();
+    .eq("external_page_id", pageId);
+  if (app.orgId) query = query.eq("org_id", app.orgId);
+  const { data: source, error } = await query.maybeSingle<LeadSource>();
   if (error) throw error;
   if (!source || source.status !== "active") {
     await logToAgent("warning", `[lead-webhook] Meta lead ${leadgenId} for unconnected/inactive page ${pageId}`);
@@ -195,7 +235,7 @@ async function processMetaChange(value: MetaLeadgenValue, appSecret: string): Pr
   if (tokenError) throw tokenError;
   if (!token) throw new Error(`No page token in Vault for lead source ${source.id}`);
 
-  const lead = await fetchMetaLead(leadgenId, token as string, appSecret);
+  const lead = await fetchMetaLead(leadgenId, token as string, app.appSecret);
   const answers: FormAnswer[] = (lead.field_data ?? []).map((f) => ({
     key: f.name,
     value: (f.values ?? []).join(", "),
@@ -217,41 +257,54 @@ async function processMetaChange(value: MetaLeadgenValue, appSecret: string): Pr
   }, source.id, source.org_id);
 }
 
-async function handleMetaEvent(req: Request): Promise<Response> {
-  const appSecret = Deno.env.get("META_APP_SECRET");
-  if (!appSecret) {
-    await logToAgent("error", "[lead-webhook] META_APP_SECRET is not set");
-    return json({ error: "Not configured" }, 500);
+async function handleMetaEvent(req: Request, url: URL): Promise<Response> {
+  let app: MetaApp | null;
+  try {
+    app = await resolveMetaApp(url);
+  } catch (err) {
+    await logToAgent("error", `[lead-webhook] Meta app lookup failed: ${errorMessage(err)}`);
+    return json({ error: "Temporary failure" }, 503);
+  }
+  if (!app) {
+    if (!url.searchParams.has("org_id")) await logToAgent("error", "[lead-webhook] META_APP_SECRET is not set");
+    // Unknown workspace and missing configuration look the same to the caller.
+    return json({ error: "Not configured" }, url.searchParams.has("org_id") ? 401 : 500);
   }
 
   const rawBody = new Uint8Array(await req.arrayBuffer());
   const header = req.headers.get("x-hub-signature-256") ?? "";
-  const expected = `sha256=${await hmacSha256Hex(appSecret, rawBody)}`;
+  const expected = `sha256=${await hmacSha256Hex(app.appSecret, rawBody)}`;
   if (!header || !timingSafeEqual(header.toLowerCase(), expected)) {
     return json({ error: "Invalid signature" }, 401);
   }
 
+  let payload: any;
   try {
-    const payload = JSON.parse(new TextDecoder().decode(rawBody));
-    if (payload?.object !== "page") return json({ received: true });
+    payload = JSON.parse(new TextDecoder().decode(rawBody));
+  } catch {
+    await logToAgent("error", "[lead-webhook] Meta payload is not valid JSON");
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  if (payload?.object !== "page") return json({ received: true });
 
-    for (const entry of payload.entry ?? []) {
-      for (const change of entry?.changes ?? []) {
-        if (change?.field !== "leadgen") continue;
-        const value: MetaLeadgenValue = { page_id: entry?.id, ...(change.value ?? {}) };
-        try {
-          await processMetaChange(value, appSecret);
-        } catch (err) {
-          await logToAgent(
-            "error",
-            `[lead-webhook] Meta lead ${value.leadgen_id ?? "?"} failed: ${errorMessage(err)}`,
-          );
-        }
+  let retryable = 0;
+  for (const entry of payload.entry ?? []) {
+    for (const change of entry?.changes ?? []) {
+      if (change?.field !== "leadgen") continue;
+      const value: MetaLeadgenValue = { page_id: entry?.id, ...(change.value ?? {}) };
+      try {
+        await processMetaChange(value, app);
+      } catch (err) {
+        if (!(err instanceof PermanentError)) retryable++;
+        await logToAgent(
+          "error",
+          `[lead-webhook] Meta lead ${value.leadgen_id ?? "?"} failed${err instanceof PermanentError ? "" : " (will retry)"}: ${errorMessage(err)}`,
+        );
       }
     }
-  } catch (err) {
-    await logToAgent("error", `[lead-webhook] Meta payload failed: ${errorMessage(err)}`);
   }
+  // Meta redelivers the whole batch; leads already saved are skipped by the upsert.
+  if (retryable > 0) return json({ error: "Temporary failure" }, 500);
   return json({ received: true });
 }
 
@@ -349,8 +402,9 @@ async function handleGoogleEvent(req: Request, url: URL): Promise<Response> {
   } catch (err) {
     await logToAgent(
       "error",
-      `[lead-webhook] Google lead ${payload.lead_id ?? "?"} failed: ${errorMessage(err)}`,
+      `[lead-webhook] Google lead ${payload.lead_id ?? "?"} failed (will retry): ${errorMessage(err)}`,
     );
+    return json({ error: "Temporary failure" }, 500);
   }
   return json({ received: true });
 }
@@ -361,12 +415,12 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   try {
     if (req.method === "GET") {
-      if (url.searchParams.has("hub.mode")) return handleMetaVerify(url);
+      if (url.searchParams.has("hub.mode")) return await handleMetaVerify(url);
       return json({ ok: true });
     }
     if (req.method === "POST") {
       if (url.searchParams.get("source") === "google") return await handleGoogleEvent(req, url);
-      return await handleMetaEvent(req);
+      return await handleMetaEvent(req, url);
     }
     return json({ error: "Method not allowed" }, 405);
   } catch (err) {

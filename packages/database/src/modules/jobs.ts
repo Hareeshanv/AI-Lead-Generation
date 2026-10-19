@@ -29,6 +29,12 @@ export interface EnqueueJobInput {
   dedupeKey?: string;
 }
 
+/** The worker and attempt number a claim was made with. */
+export interface JobLock {
+  worker: string;
+  attempt: number;
+}
+
 export const jobsDb = {
   /** Returns null when an active job with the same dedupeKey already exists. */
   async enqueue(input: EnqueueJobInput): Promise<JobRow | null> {
@@ -62,21 +68,64 @@ export const jobsDb = {
     return (data || []) as JobRow[];
   },
 
-  async complete(jobId: string): Promise<void> {
-    const { error } = await dbClient
+  /**
+   * Marks a claimed job succeeded. With `lock`, only while that worker still holds this attempt
+   * (a job whose lock expired and was re-claimed is left to the new holder); returns false then.
+   */
+  async complete(jobId: string, lock?: JobLock): Promise<boolean> {
+    let query = dbClient
       .from("jobs")
       .update({ status: "succeeded", completed_at: new Date().toISOString(), locked_at: null, last_error: null })
       .eq("id", jobId);
+    if (lock) query = query.eq("status", "running").eq("locked_by", lock.worker).eq("attempts", lock.attempt);
+    const { data, error } = await query.select("id");
     if (error) throw dbError("complete job", error);
+    return (data || []).length > 0;
   },
 
-  /** Requeues at retryAt, or marks the job failed when retryAt is null. */
-  async fail(jobId: string, message: string, retryAt: Date | null): Promise<void> {
+  /** Requeues at retryAt, or marks the job failed when retryAt is null. `lock` as in complete(). */
+  async fail(jobId: string, message: string, retryAt: Date | null, lock?: JobLock): Promise<boolean> {
     const patch = retryAt
       ? { status: "queued", run_at: retryAt.toISOString(), locked_at: null, locked_by: null, last_error: message }
       : { status: "failed", completed_at: new Date().toISOString(), locked_at: null, last_error: message };
-    const { error } = await dbClient.from("jobs").update(patch).eq("id", jobId);
+    let query = dbClient.from("jobs").update(patch).eq("id", jobId);
+    if (lock) query = query.eq("status", "running").eq("locked_by", lock.worker).eq("attempts", lock.attempt);
+    const { data, error } = await query.select("id");
     if (error) throw dbError("fail job", error);
+    return (data || []).length > 0;
+  },
+
+  /** Extends the locks a worker holds so claim_jobs does not treat long jobs as crashed. */
+  async heartbeat(worker: string, jobIds: string[]): Promise<void> {
+    if (jobIds.length === 0) return;
+    const { error } = await dbClient
+      .from("jobs")
+      .update({ locked_at: new Date().toISOString() })
+      .in("id", jobIds)
+      .eq("status", "running")
+      .eq("locked_by", worker);
+    if (error) throw dbError("extend job locks", error);
+  },
+
+  /** Shutdown: puts unfinished jobs back in the queue without spending an attempt. */
+  async release(worker: string, jobs: { id: string; attempts: number }[]): Promise<void> {
+    for (const job of jobs) {
+      const { error } = await dbClient
+        .from("jobs")
+        .update({ status: "queued", locked_at: null, locked_by: null, attempts: Math.max(0, job.attempts - 1) })
+        .eq("id", job.id)
+        .eq("status", "running")
+        .eq("locked_by", worker)
+        .eq("attempts", job.attempts);
+      if (error) throw dbError("release job", error);
+    }
+  },
+
+  /** Deletes finished (succeeded/failed/cancelled) jobs last updated before `before`; returns how many. */
+  async purgeFinished(before: Date, batchSize = 1000): Promise<number> {
+    const { data, error } = await dbClient.rpc("purge_finished_jobs", { p_before: before.toISOString(), p_limit: batchSize });
+    if (error) throw dbError("purge finished jobs", error);
+    return Number(data) || 0;
   },
 
   async cancel(filter: { orgId: string; type?: string; dedupeKeyPrefix?: string }): Promise<number> {

@@ -347,4 +347,27 @@ export const workflowsDb = {
     if (error) throw dbError("check queued jobs", error);
     return (count ?? 0) > 0;
   },
+
+  /** Leads among `leadIds` a "leads"-scoped schedule workflow has already run for. */
+  async scheduleProcessedLeadIds(orgId: string, workflowId: string, leadIds: string[]): Promise<Set<string>> {
+    const done = new Set<string>();
+    for (let i = 0; i < leadIds.length; i += 200) {
+      const { data, error } = await dbClient
+        .from("workflow_schedule_leads")
+        .select("lead_id")
+        .eq("org_id", orgId)
+        .eq("workflow_id", workflowId)
+        .in("lead_id", leadIds.slice(i, i + 200));
+      if (error) throw dbError("list processed schedule leads", error);
+      for (const row of data || []) done.add(row.lead_id as string);
+    }
+    return done;
+  },
+
+  async markScheduleLeadProcessed(orgId: string, workflowId: string, leadId: string, runId: string | null): Promise<void> {
+    const { error } = await dbClient
+      .from("workflow_schedule_leads")
+      .upsert({ org_id: orgId, workflow_id: workflowId, lead_id: leadId, run_id: runId }, { onConflict: "workflow_id,lead_id", ignoreDuplicates: true });
+    if (error) throw dbError("mark schedule lead processed", error);
+  },
 };

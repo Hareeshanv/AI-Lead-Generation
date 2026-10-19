@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
 import { ZodError } from "zod";
 import { DbError, UNIQUE_VIOLATION } from "@ai-lead-gen/database";
+import { logger } from "../logger";
 
 export type ErrorCode =
   | "BAD_REQUEST"
@@ -84,7 +85,7 @@ function toHttpError(err: unknown): HttpError {
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const httpError = toHttpError(err);
   if (httpError.status >= 500) {
-    console.error(`[API] ${req.method} ${req.originalUrl} failed:`, err);
+    logger.error("Request failed", { method: req.method, path: req.path, orgId: req.ctx?.orgId, err });
   }
   if (res.headersSent) return;
   const body: ErrorBody = {

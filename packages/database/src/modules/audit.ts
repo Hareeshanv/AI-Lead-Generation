@@ -33,4 +33,11 @@ export const auditDb = {
     if (error) throw dbError("list audit log", error);
     return data || [];
   },
+
+  /** System-wide retention: deletes up to `batchSize` rows created before `before`; returns how many. */
+  async purgeBefore(before: Date, batchSize = 1000): Promise<number> {
+    const { data, error } = await dbClient.rpc("purge_audit_log", { p_before: before.toISOString(), p_limit: batchSize });
+    if (error) throw dbError("purge audit log", error);
+    return Number(data) || 0;
+  },
 };

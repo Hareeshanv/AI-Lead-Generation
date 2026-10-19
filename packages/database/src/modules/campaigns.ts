@@ -101,6 +101,8 @@ export interface MessageRow {
   replied_at: string | null;
   bounced_at: string | null;
   failed_at: string | null;
+  /** Set when a send attempt starts (WhatsApp sends have no provider idempotency key). */
+  send_started_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -761,6 +763,37 @@ export const campaignsDb = {
       .maybeSingle();
     if (error) throw dbError("update message", error);
     return data as MessageRow | null;
+  },
+
+  async getMessage(orgId: string, messageId: string): Promise<MessageRow | null> {
+    const { data, error } = await dbClient.from("messages").select("*").eq("org_id", orgId).eq("id", messageId).maybeSingle();
+    if (error) throw dbError("get message", error);
+    return data as MessageRow | null;
+  },
+
+  /** Marks a queued message as being sent; false when another attempt already claimed it. */
+  async claimMessageSend(orgId: string, messageId: string): Promise<boolean> {
+    const { data, error } = await dbClient
+      .from("messages")
+      .update({ send_started_at: new Date().toISOString() })
+      .eq("org_id", orgId)
+      .eq("id", messageId)
+      .eq("status", "queued")
+      .is("send_started_at", null)
+      .select("id");
+    if (error) throw dbError("claim message send", error);
+    return (data || []).length > 0;
+  },
+
+  /** Undoes claimMessageSend after the provider rejected the request (nothing was sent). */
+  async releaseMessageSend(orgId: string, messageId: string): Promise<void> {
+    const { error } = await dbClient
+      .from("messages")
+      .update({ send_started_at: null })
+      .eq("org_id", orgId)
+      .eq("id", messageId)
+      .eq("status", "queued");
+    if (error) throw dbError("release message send", error);
   },
 
   /** Webhook lookup across orgs (the provider id is globally unique per provider). */

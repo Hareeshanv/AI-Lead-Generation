@@ -22,6 +22,9 @@ import {
   type WorkflowAction,
   type WorkflowTrigger,
 } from "./schema";
+import { logger } from "../logger";
+
+const log = logger.child({ module: "workflows" });
 
 /** A workflow-originated event may trigger other workflows only this many levels deep. */
 export const MAX_CHAIN_DEPTH = 3;
@@ -187,9 +190,7 @@ async function finishRun(
   const finished: WorkflowRunRow = { ...run, status, error, completed_at: completedAt };
   if (run.dry_run) return finished;
 
-  await workflowsDb.refreshStats(orgId, wf.id).catch((err) =>
-    console.error(`[Workflows] Updating stats for ${wf.id} failed: ${err?.message || err}`)
-  );
+  await workflowsDb.refreshStats(orgId, wf.id).catch((err) => log.error("Updating workflow stats failed", { orgId, workflowId: wf.id, err }));
   if (status !== "skipped" && (ctx.lead?.id || ctx.deal?.id)) {
     await activitiesDb
       .create(orgId, {
@@ -200,7 +201,7 @@ async function finishRun(
         body: error,
         metadata: { workflowId: wf.id, runId: run.id, status },
       })
-      .catch((err) => console.error(`[Workflows] Writing activity for run ${run.id} failed: ${err?.message || err}`));
+      .catch((err) => log.error("Writing workflow activity failed", { orgId, runId: run.id, err }));
   }
   // Failures emit only workflow.run_failed so subscribers don't handle the same failure twice.
   if (status !== "failed") {
@@ -273,7 +274,7 @@ async function executeFrom(
     } catch (err: any) {
       const message =
         err instanceof ActionError ? err.message : `Unexpected error: ${String(err?.message || err).slice(0, 500)}`;
-      if (!(err instanceof ActionError)) console.error(`[Workflows] Run ${run.id} step ${position} crashed:`, err);
+      if (!(err instanceof ActionError)) log.error("Workflow step crashed", { orgId, runId: run.id, position, err });
       await workflowsDb.createStep(orgId, {
         runId: run.id,
         position,
@@ -338,7 +339,7 @@ export async function runWorkflow(wf: WorkflowRow, trigger: TriggerInput, option
     const finished = await executeFrom(orgId, wf, run, actions, 0, ctx, scope);
     return { run: finished, conditions: trace };
   } catch (err: any) {
-    console.error(`[Workflows] Run ${run.id} crashed:`, err);
+    log.error("Workflow run crashed", { orgId, runId: run.id, err });
     const finished = await finishRun(orgId, wf, run, "failed", ctx, `Unexpected error: ${err?.message || err}`);
     return { run: finished, conditions: trace };
   }
@@ -359,7 +360,7 @@ async function handleEvent(event: DomainEvent): Promise<void> {
   const parent = chainScope.getStore();
   const depth = parent?.depth ?? 0;
   if (depth >= MAX_CHAIN_DEPTH) {
-    console.warn(`[Workflows] Not triggering workflows from ${name}: chain depth ${depth} reached.`);
+    log.warn("Not triggering workflows: chain depth reached", { orgId, event: name, depth });
     return;
   }
 
@@ -374,7 +375,7 @@ async function handleEvent(event: DomainEvent): Promise<void> {
     try {
       await runWorkflow(wf, { event: name, payload }, { scope });
     } catch (err: any) {
-      console.error(`[Workflows] Workflow ${wf.id} failed to run for ${name}: ${err?.message || err}`);
+      log.error("Workflow failed to run", { orgId, workflowId: wf.id, event: name, err });
     }
   }
 }
@@ -430,7 +431,7 @@ async function resumeDelayedRun(orgId: string, workflowId: string, runId: string
     });
     await executeFrom(orgId, wf, { ...run, status: "running" }, actions, stepPosition, ctx, { depth: 1, chain: [wf.id] });
   } catch (err: any) {
-    console.error(`[Workflows] Resuming run ${runId} failed:`, err);
+    log.error("Resuming delayed workflow run failed", { orgId, runId, err });
     await finishRun(orgId, wf, run, "failed", ctxStub, `Resuming after the delay failed: ${err?.message || err}`);
   }
 }
@@ -454,7 +455,7 @@ async function queueNextTick(wf: WorkflowRow, after: Date): Promise<void> {
   try {
     next = nextCronDate(cron, timezone, after);
   } catch (err: any) {
-    console.error(`[Workflows] Workflow ${wf.id} has an invalid cron "${cron}": ${err?.message || err}`);
+    log.error("Workflow has an invalid cron", { orgId: wf.org_id, workflowId: wf.id, cron, err });
     return;
   }
   await enqueueJob(
@@ -479,16 +480,26 @@ async function runScheduleTick(orgId: string, workflowId: string, cron: string):
     return;
   }
 
+  // Each lead runs at most once per workflow; leads whose conditions don't match yet are checked again next tick.
   const leads = await loadRecentLeads(orgId, SCHEDULE_LEAD_SCAN_LIMIT);
+  const processed = await workflowsDb.scheduleProcessedLeadIds(
+    orgId,
+    wf.id,
+    leads.map((l) => String(l.id))
+  );
   let runs = 0;
   for (const lead of leads) {
     if (runs >= SCHEDULE_MAX_RUNS) break;
+    if (processed.has(String(lead.id))) continue;
     const result = await runWorkflow(
       wf,
       { event: "schedule", payload: { ...payload, leadId: lead.id } },
       { scope, lead, deal: null, recordSkipped: false }
     );
-    if (result) runs++;
+    if (result) {
+      runs++;
+      await workflowsDb.markScheduleLeadProcessed(orgId, wf.id, String(lead.id), result.run.id);
+    }
   }
 }
 
@@ -573,6 +584,6 @@ registerJobHandler(
 
 if (isDbConfigured && process.env.NODE_ENV !== "test") {
   setTimeout(() => {
-    bootstrapSchedules().catch((err) => console.error(`[Workflows] Schedule bootstrap failed: ${err?.message || err}`));
+    bootstrapSchedules().catch((err) => log.error("Schedule bootstrap failed", { err }));
   }, 5_000).unref();
 }

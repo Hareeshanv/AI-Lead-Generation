@@ -1,4 +1,7 @@
 import { auditDb } from "@ai-lead-gen/database";
+import { logger } from "./logger";
+
+const log = logger.child({ module: "events" });
 
 /** Fields every domain event carries. actorId is null for system/webhook/job originated events. */
 export interface EventBase {
@@ -127,7 +130,7 @@ class EventBus {
       tasks.push(
         Promise.resolve()
           .then(fn)
-          .catch((err) => console.error(`[Events] ${label} handler for ${name} failed:`, err?.message || err))
+          .catch((err) => log.error("Event handler failed", { handler: label, event: name, err }))
       );
 
     if (!NOT_AUDITED.has(name) && payload.orgId) {

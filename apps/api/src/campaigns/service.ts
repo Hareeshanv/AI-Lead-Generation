@@ -31,6 +31,8 @@ import {
   buildWhatsAppTemplate,
   renderTemplate,
   templateVariables,
+  UNSUBSCRIBE_SECRET_MISSING,
+  unsubscribeConfigured,
   unsubscribeUrl,
   whatsappTemplateSchema,
 } from "./content";
@@ -42,6 +44,8 @@ import { stepRowToBody, validateSteps } from "./validation";
 const SEND_JOB = "campaign.send_step" as const;
 const AUDIENCE_LIMIT = 20_000;
 const RESCHEDULE_JITTER_MS = 5 * 60 * 1000;
+/** Longer than a WhatsApp send request can take (20s timeout), so an older claim belongs to a dead attempt. */
+const SEND_CLAIM_STALE_MS = 2 * 60 * 1000;
 
 export function defaultCountryCode(): string {
   return (process.env.WHATSAPP_DEFAULT_COUNTRY_CODE || "91").replace(/\D/g, "") || "91";
@@ -96,6 +100,7 @@ export async function getChannelConfig(
 ): Promise<{ config: ChannelConfig } | { error: string }> {
   const identity = (campaign.from_identity || {}) as Record<string, string | undefined>;
   if (campaign.channel === "email") {
+    if (!unsubscribeConfigured()) return { error: UNSUBSCRIBE_SECRET_MISSING };
     const creds = await getProviderCredentials(orgId, "resend");
     if (!creds?.apiKey) {
       return { error: "Email is not configured. Add a Resend API key and a verified from address under Integrations → Resend." };
@@ -548,12 +553,32 @@ export async function handleSendStep(payload: JobPayloadMap[typeof SEND_JOB], ct
       });
     }
 
+    // WhatsApp has no idempotency key (Resend gets one in deliver): claim the message so a retried or
+    // duplicate job never sends it twice.
+    const claimsSend = config.channel === "whatsapp";
+    if (claimsSend && !(await campaignsDb.claimMessageSend(orgId, message.id))) {
+      const current = await campaignsDb.getMessage(orgId, message.id);
+      const startedAt = current?.send_started_at ? new Date(current.send_started_at).getTime() : 0;
+      if (current && current.status === "queued" && Date.now() - startedAt > SEND_CLAIM_STALE_MS) {
+        const reason = "A previous send attempt was interrupted, so it is unknown whether WhatsApp delivered it. Not resent to avoid a duplicate.";
+        const patch = nextMessageState(current, "failed", new Date().toISOString(), reason);
+        if (patch) await campaignsDb.updateMessage(orgId, message.id, patch);
+        await endRecipient(orgId, campaignId, recipientId, "failed", reason);
+        throw new PermanentJobError(reason);
+      }
+      throw new Error("Another attempt is sending this message; checking again shortly.");
+    }
+
     let sent: Awaited<ReturnType<typeof deliver>>;
     try {
       sent = await deliver(config, campaign, step, lead, message, to);
     } catch (err: any) {
       const reason = String(err?.message || err).slice(0, 1000);
       const retryable = err instanceof MessagingError ? err.retryable : true;
+      // Only an error response from the provider proves nothing was sent; timeouts and dropped connections stay claimed.
+      if (claimsSend && err instanceof MessagingError && err.status !== undefined) {
+        await campaignsDb.releaseMessageSend(orgId, message.id);
+      }
       if (retryable && ctx.attempt < ctx.job.max_attempts) {
         await campaignsDb.updateMessage(orgId, message.id, { error: reason });
         throw err;

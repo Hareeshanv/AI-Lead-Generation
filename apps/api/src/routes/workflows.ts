@@ -12,6 +12,7 @@ import { parse, parseId, queryBoolean } from "../http/validate";
 import { getCtx, requireRole } from "../middleware/auth";
 import { invalidateWorkflowCache, syncWorkflowSchedule, testWorkflow } from "../workflows/engine";
 import { loadDeal, loadLead } from "../workflows/actions";
+import { logger } from "../logger";
 import {
   parseStoredDefinition,
   triggerSubjects,
@@ -110,7 +111,7 @@ async function afterChange(row: WorkflowRow | { id: string; org_id: string; enab
   try {
     await syncWorkflowSchedule(row);
   } catch (err: any) {
-    console.error(`[Workflows] Scheduling ${row.id} failed: ${err?.message || err}`);
+    logger.error("Scheduling workflow failed", { module: "workflows", orgId: row.org_id, workflowId: row.id, err });
   }
 }
 
