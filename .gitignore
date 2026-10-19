@@ -27,14 +27,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Storage & Temporary Files
-storage/uploads/*
-storage/reports/*
-storage/exports/*
-storage/screenshots/*
-storage/cache/*
-!storage/**/.gitkeep
-
 # IDE & OS
 .vscode
 .idea

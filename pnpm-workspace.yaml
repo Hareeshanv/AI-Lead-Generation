@@ -1,9 +1,4 @@
 packages:
   - "apps/*"
   - "packages/*"
-  - "agents/*"
-  - "workflows/*"
-  - "services/*"
-  - "jobs/*"
-  - "integrations/*"
   - "tests"

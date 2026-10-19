@@ -11,13 +11,17 @@ Ignore `AGENT.md`, `CLAUDE.md`, `.windsurfrules`, `.cursor/rules/agent.mdc`: the
 ## Layout
 
 - `apps/web` - Next.js 15 (App Router), React Query hooks in `src/hooks`, API clients in `src/services/api`, Supabase auth (`src/lib/supabase`, `src/middleware.ts`).
-- `apps/api` - Express API. Routes in `src/routes`, domain modules (`campaigns`, `workflows`, `integrations`, `services/crm`, `services/leads`), and a DB-backed job runner (`src/jobs/runner.ts`, `src/jobs/registry.ts`).
-- `packages/database` - Supabase client plus query modules (`src/modules/*`, `src/queries.ts`).
-- `services/` - shared logic imported by the API: `discovery` (Serper/Places agent), `sarvam` (LLM), `search` (query parser, lead search), `signals`, `messaging` (Resend email, WhatsApp).
-- `agents/scoring/intent.ts` - intent scoring agent.
-- `supabase/migrations` - SQL migrations (source of truth for the schema); `supabase/functions/lead-webhook` - Deno edge function for Meta/Google lead ads.
+- `apps/api` - Express API. `src/app.ts` builds the app; routes are registered in the `routeModules` table in `src/routes/index.ts` (auth level per router). Domain modules: `campaigns`, `workflows`, `integrations`, `services/crm`, `services/leads`, `notifications`; the discovery agent runner is `src/agents/discovery.ts`.
+  - Lead scoring lives only in `src/services/leads/scoring.ts`.
+  - Background work uses the Postgres-backed job queue: register handlers with `registerJobHandler` and enqueue with `enqueueJob` (`src/jobs/registry.ts`; add new types to `JobPayloadMap`). `src/jobs/runner.ts` claims, heartbeats, times out, retries and requeues on shutdown; `src/jobs/retention.ts` prunes old jobs and audit-log rows. No Redis or separate worker.
+  - Log with `logger` from `src/logger.ts` (JSON lines, `LOG_LEVEL`), not `console.*`.
+  - Built for production with esbuild into a single `dist/index.js` (bundles `packages/database` and `services/*`).
+- `packages/database` - `@ai-lead-gen/database`: Supabase client plus query modules (`src/modules/*`, `src/queries.ts`).
+- `services/` - shared logic imported by the API by relative path (not workspace packages): `discovery` (Serper/Places agent), `sarvam` (LLM), `search` (query parser, lead search, and the per-workspace `discovery` vocabulary in `vocabulary.ts`), `signals`, `messaging` (Resend email, WhatsApp).
+- `supabase/migrations` - SQL migrations (source of truth for the schema); `supabase/functions/lead-webhook` - Deno edge function for Meta/Google lead ads (pure helpers in `normalize.ts`).
 - `tests/` - Vitest projects `unit` and `api` (supertest against a live Supabase stack), Playwright e2e in `tests/e2e`.
-- Most other folders under `agents/`, `services/`, `packages/`, `infrastructure/` are empty `.gitkeep` stubs.
+- Workspace packages (`pnpm-workspace.yaml`): `apps/*`, `packages/*`, `tests`. There are no other top-level source folders; don't recreate placeholder/stub directories.
+- Tooling: ESLint flat config `eslint.config.mjs`, Prettier `.prettierrc.json`, Node 20 (`.nvmrc`), turbo v2 `turbo.json`. Docker: `apps/api/Dockerfile`, `apps/web/Dockerfile` (Next standalone via `NEXT_OUTPUT=standalone`; doesn't work on Windows), `docker-compose.yml`. CI: `.github/workflows/ci.yml` (lint, typecheck, unit tests, builds, Docker images, API + e2e against `supabase start`).
 
 ## Conventions
 
@@ -34,15 +38,15 @@ Ignore `AGENT.md`, `CLAUDE.md`, `.windsurfrules`, `.cursor/rules/agent.mdc`: the
 pnpm install
 pnpm --filter @ai-lead-gen/api dev     # API on PORT (default 4000)
 pnpm --filter @ai-lead-gen/web dev     # web on http://localhost:3000
-pnpm --filter @ai-lead-gen/api typecheck
-pnpm --filter @ai-lead-gen/web typecheck
 
-cd tests
-pnpm test:unit       # no services needed
+# from the repo root
+pnpm lint            # eslint . (0 errors expected)
+pnpm typecheck       # api, web, database, tests
+pnpm test            # unit tests, no services needed
 npx supabase start   # required for api + e2e suites
 pnpm test:api
 pnpm test:e2e        # starts API on 4011 and web on 3011
-pnpm typecheck
+pnpm build           # API bundle + Next build (don't build into apps/web/.next while `next dev` runs; set NEXT_DIST_DIR)
 
 npx supabase db push                                       # apply migrations to linked project
 npx supabase functions deploy lead-webhook --no-verify-jwt

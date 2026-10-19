@@ -1,177 +1,113 @@
-# 🤖 AI Lead Generation Engine
+# AI Lead Generation
 
-An enterprise-grade autonomous AI system designed for finding, enriching, verifying, scoring, and engaging sales leads at scale.
+Multi-tenant B2B lead discovery, scoring, outreach and CRM. Workspaces find prospects with a discovery agent (Serper web + Google Places search, classified and scored by Sarvam), ingest leads from Meta / Google lead-form ads, score them, run email / WhatsApp campaigns and automation workflows, and track deals in a pipeline.
 
----
+TypeScript everywhere, in a pnpm + Turborepo monorepo. Supabase provides Postgres, Auth and an edge function. There is no Redis or separate worker: background work runs on a Postgres-backed job queue inside the API process.
 
-## 📁 Repository Structure
+## Architecture
 
 ```
-ai-lead-generation/
-│
-├── apps/                        # Primary Applications
-│   ├── web/                     # Next.js Frontend Application
-│   ├── admin/                   # Admin Dashboard
-│   ├── api/                     # Central Backend API Service
-│   └── docs/                    # Internal Technical Documentation
-│
-├── packages/                    # Shared Workspaces & Core Libraries
-│   ├── ui/                      # Shared UI Component Library
-│   ├── database/                # Database Client, Schema & Migrations
-│   ├── auth/                    # Authentication & Authorization Module
-│   ├── ai/                      # Core AI Models & Orchestrator Engine
-│   ├── prompts/                 # Prompt Engineering Templates & Registry
-│   ├── types/                   # Shared TypeScript Interfaces & Types
-│   ├── config/                  # Shared Workspace Configuration & Constants
-│   ├── logger/                  # Structured Telemetry & Logging Package
-│   └── shared/                  # Common Helper Utilities
-│
-├── agents/                      # Specialized AI Agents
-│   ├── planner/                 # Lead Generation Strategy Planner
-│   ├── search/                  # Multi-engine Lead Search Agent
-│   ├── crawler/                 # Web Scraping & Crawling Agent
-│   ├── extractor/               # Unstructured to Structured Data Extractor
-│   ├── enrichment/              # Business & Contact Information Enriched
-│   ├── verifier/                # Email/Phone Verification Agent
-│   ├── deduplication/           # Entity Matching & Deduplication
-│   ├── scoring/                 # Ideal Customer Profile (ICP) Scorer
-│   ├── outreach/                # Cold Outreach Email Generator
-│   ├── crm/                     # CRM Synchronization Agent
-│   ├── report/                  # Intelligence & Analytics Report Generator
-│   ├── analytics/               # System Performance & ROI Tracker
-│   ├── scheduler/               # Agent Lifecycle & Task Scheduler
-│   └── orchestrator/            # Master Multi-Agent System Orchestrator
-│
-├── workflows/                   # Automated Orchestration Workflows
-│   ├── find-leads/              # End-to-end Lead Discovery Pipeline
-│   ├── enrich-company/          # Deep Company Intelligence Gathering
-│   ├── verify-contact/          # Multi-step Verification Workflow
-│   ├── score-lead/              # Lead Scoring Pipeline
-│   ├── send-email/              # Smart Outreach Delivery Flow
-│   ├── followup/                # Dynamic Follow-up Sequence
-│   └── daily-sync/              # Periodic CRM & Data Sync Workflow
-│
-├── services/                    # Core Infrastructure & Vendor Services
-│   ├── openai/                  # LLM Service Client
-│   ├── search/                  # Web Search API Service
-│   ├── browser/                 # Headless Browser Fleet Manager
-│   ├── email/                   # SMTP & Email Provider Interface
-│   ├── storage/                 # Object Storage Manager (S3 / MinIO)
-│   ├── queue/                   # Background Task Queue (BullMQ / Redis)
-│   ├── scraper/                 # Proxy Scraper Service
-│   ├── vector/                  # Vector DB Client (Embeddings & Semantic Search)
-│   ├── analytics/               # Metrics Collector Service
-│   └── crm/                     # Unified CRM Abstraction Layer
-│
-├── database/                    # Database Infrastructure
-│   ├── migrations/              # Database Schema Migrations
-│   ├── schema/                  # Database Schema Definitions
-│   ├── seeds/                   # Seed Data Scripts
-│   ├── functions/               # Database Stored Procedures & Triggers
-│   └── views/                   # Analytical Views
-│
-├── jobs/                        # Asynchronous Background Processing Jobs
-│   ├── crawl-job/               # Web Crawling Worker Job
-│   ├── scoring-job/             # Batch Lead Scoring Worker Job
-│   ├── email-job/               # Email Queue Worker Job
-│   ├── cleanup-job/             # System Maintenance & Retention Job
-│   ├── retry-job/               # Failed Execution Retry Handler
-│   └── scheduler/               # Cron Schedule Executor
-│
-├── integrations/                # 3rd Party Connectors
-│   ├── google/                  # Google Workspace / Search APIs
-│   ├── microsoft/               # Microsoft Graph & Outlook
-│   ├── slack/                   # Slack Alerts & Notifications
-│   ├── hubspot/                 # HubSpot CRM Connector
-│   ├── salesforce/              # Salesforce CRM Connector
-│   ├── zapier/                  # Zapier Webhook Integration
-│   └── webhooks/                # Inbound/Outbound Webhooks
-│
-├── storage/                     # Data Storage Directories
-│   ├── uploads/                 # File Upload Storage
-│   ├── reports/                 # Generated PDF/CSV Reports
-│   ├── exports/                 # Data Export Files
-│   ├── screenshots/             # Web Crawl Screenshots
-│   └── cache/                   # Local Storage Cache
-│
-├── monitoring/                  # Observability & Monitoring
-│   ├── metrics/                 # Prometheus / Custom Metrics
-│   ├── logs/                    # Centralized Log Configurations
-│   ├── tracing/                 # OpenTelemetry Tracing Setup
-│   └── alerts/                  # Alert Rules & Thresholds
-│
-├── infrastructure/              # Deployment & DevOps Infrastructure
-│   ├── docker/                  # Dockerfiles & Image Specifications
-│   ├── kubernetes/              # Kubernetes Helm Charts & Manifests
-│   ├── nginx/                   # Reverse Proxy & Load Balancer Configs
-│   ├── terraform/               # Infrastructure as Code (IaC)
-│   └── cloud/                   # Cloud Provider Deploy Scripts
-│
-├── tests/                       # Automated Test Suites
-│   ├── unit/                    # Unit Tests
-│   ├── integration/             # Component Integration Tests
-│   ├── api/                     # API Endpoint Tests
-│   ├── agents/                  # AI Agent Behavioral Tests
-│   └── e2e/                     # End-to-End User Flow Tests
-│
-└── scripts/                     # Operational & Maintenance Scripts
-    ├── setup/                   # Environment Setup Scripts
-    ├── migrate/                 # DB Migration Execution Scripts
-    ├── seed/                    # Database Seeding Scripts
-    ├── deploy/                  # Production Build & Deploy Scripts
-    └── backup/                  # Database & Storage Backup Scripts
+apps/
+  api/          Express API (port 4000) + in-process job runner
+  web/          Next.js 15 App Router dashboard (port 3000)
+packages/
+  database/     @ai-lead-gen/database: Supabase client and org-scoped query modules
+services/       Shared logic imported by the API by relative path (not workspace packages)
+  discovery/    Lead Discovery Agent: Serper web/places search, Sarvam classification, dedupe, post-processing
+  sarvam/       Sarvam chat-completions client (JSON-mode agent calls, token accounting)
+  search/       Natural-language lead search: query parser, vocabulary, lead search
+  signals/      Normalises and redacts intent signals (public posts showing buying intent)
+  messaging/    Resend (email) and WhatsApp Cloud API senders
+supabase/
+  migrations/   SQL migrations, the source of truth for the schema (RLS, RPCs, triggers)
+  functions/lead-webhook/   Deno edge function for Meta Lead Ads / Google Ads lead forms
+tests/          Vitest (unit, api) and Playwright (e2e) suites
 ```
 
----
+### API (`apps/api`)
 
-## 🛠 Getting Started
+- `src/index.ts` boots the server; `src/app.ts` builds the Express app; routes are mounted from the table in `src/routes/index.ts`. Every route is org-authenticated unless it is marked `user` (onboarding) or `public` (health, provider webhooks, OAuth callbacks).
+- Domain modules: `campaigns/` (audience, scheduling, content, sending, provider webhooks), `workflows/` (schema, conditions, actions, engine), `integrations/` (per-workspace credentials, health checks, outbound webhooks), `services/crm` (deals, pipeline, tasks), `services/leads` (scoring), `agents/discovery.ts` (discovery runs), `notifications/`.
+- Multi-tenancy: each authenticated request carries the caller's `org_id`, and every query and mutation is scoped by it.
+- Provider credentials (Serper, Sarvam, Resend, WhatsApp, Meta, Slack, outbound webhook) are resolved per workspace by `src/integrations/credentials.ts`. Workspace secrets live in the Supabase vault. Env keys are only a fallback, used when `PLATFORM_MANAGED_PROVIDERS` allows it.
+- Outbound HTTP to user-supplied URLs (Slack, outbound webhooks, workflow webhook actions) goes through `src/integrations/safeHttp.ts`. URLs must be `https` and resolve to public addresses; private, loopback, link-local, CGNAT, multicast and cloud-metadata hosts are rejected both when the URL is saved and when a request is sent. Slack URLs must be on `hooks.slack.com`.
+- Logs are JSON lines on stdout/stderr (`src/logger.ts`, level from `LOG_LEVEL`).
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) `>= 18.0.0`
-- [pnpm](https://pnpm.io/) `>= 8.0.0`
-- [Docker & Docker Compose](https://www.docker.com/)
+### Job queue
 
-### Installation & Run
+Jobs are rows in the `jobs` table (migration `0012`, hardened in `0017`). `src/jobs/runner.ts` claims due jobs with a locking RPC. It runs up to `JOB_CONCURRENCY` at once per API instance, heartbeats long jobs, retries failures with exponential backoff (30s · 2^(n-1), capped at 1h), and enforces a per-type timeout. On shutdown it waits up to 25s, then puts unfinished jobs back on the queue. Several API instances can share the queue safely.
 
-1. **Install workspace dependencies**:
-   ```bash
-   pnpm install
-   ```
+| Job type | Purpose |
+|---|---|
+| `agent.run` | A Lead Discovery Agent run (30 min timeout) |
+| `lead.ingested` | Scores leads inserted by the edge function and fires `lead.created` (enqueued by a DB trigger) |
+| `lead.rescore` | Re-scores a lead |
+| `campaign.send_step` | Sends one campaign step to one recipient |
+| `workflow.delayed_action` | Resumes a workflow after a delay step |
+| `workflow.schedule_tick` | Cron-scheduled workflow runs |
+| `integration.health_check` | Periodic provider credential checks (`INTEGRATION_HEALTH_CHECK_MINUTES`) |
+| `maintenance.retention` | Deletes finished jobs and old audit-log rows (`JOB_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS`) |
 
-2. **Set up local environment file**:
-   ```bash
-   cp .env.example .env
-   ```
+### Lead discovery
 
-3. **Start infrastructure services (PostgreSQL + pgvector, Redis, MinIO storage)**:
-   ```bash
-   docker-compose up -d
-   ```
+A discovery run (Agents page, `POST /api/discovery/run`) is queued as an `agent.run` job and supports two sources:
 
-4. **Launch development servers across all apps**:
-   ```bash
-   pnpm dev
-   ```
+- **Places**: Google Places listings via Serper. Sarvam judges relevance and fit; when Sarvam fails, rule-based scores are used instead. Listings are deduplicated against existing leads by phone, email, website domain and Maps listing, then saved as leads.
+- **Web**: site-scoped Google queries (Reddit, Quora, LinkedIn, YouTube, Instagram, Facebook, open web) for posts showing intent. Snippets are redacted before they go to Sarvam, and posts classified as prospective customers are saved as intent signals.
 
----
+Each step is logged so the UI shows progress. A run that partly fails finishes as `completed_with_errors` rather than failing outright.
 
-## Setup & run
+### Web (`apps/web`)
+
+Next.js App Router with Supabase Auth (`src/lib/supabase`, `src/middleware.ts`). Data fetching uses React Query hooks in `src/hooks` (query keys in `src/hooks/queryKeys.ts`), backed by API clients in `src/services/api`. Pages: dashboard, leads, CRM pipeline, campaigns, workflows, agents (discovery), analytics, integrations, notifications, settings (workspace, members, invitations).
+
+### Edge function (`supabase/functions/lead-webhook`)
+
+Receives Meta Lead Ads webhooks (signature-verified) and Google Ads lead-form posts (`?source=google&source_id=<lead source>` plus the per-source key). It normalises answers in `normalize.ts` (a pure, unit-tested module) and inserts leads idempotently. The insert trigger queues `lead.ingested`, so the API must be running for those leads to be scored and for workflows to fire.
+
+Meta apps: without a query string the platform app (`META_APP_SECRET` / `META_VERIFY_TOKEN`) is used. A workspace with its own Meta app points that app's webhook at `<function URL>?org_id=<workspace id>`; the workspace's stored Meta secret then verifies the request, and only that workspace's lead sources are used.
+
+## Setup
+
+Prerequisites: Node.js 20 (`.nvmrc`), pnpm 8 (`corepack enable`), and Docker if you want a local Supabase stack or the container images.
+
+```bash
+pnpm install
+cp .env.example .env          # repo root; the API and web app both read it
+```
 
 ### Environment variables
 
-Copy `.env.example` to `.env` (repo root; the API and web app both read it). Required:
+`.env.example` documents every variable. Required:
 
 | Variable | Used by | Notes |
 |---|---|---|
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | API | Service role key is secret; never expose it to the browser. |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Web | Public anon key. |
-| `NEXT_PUBLIC_API_URL` | Web | e.g. `http://localhost:4000/api`. |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Web | Public anon key. Baked into the web build. |
+| `NEXT_PUBLIC_API_URL` | Web | e.g. `http://localhost:4000/api`. Baked into the web build. |
 | `WEB_APP_URL` | API | Base for invite / reset-password links and OAuth redirects. |
 | `API_PUBLIC_URL` | API | Public API URL (unsubscribe links, provider webhooks). |
+| `CAMPAIGN_UNSUBSCRIBE_SECRET` | API | Signs unsubscribe links. Email campaigns refuse to send without it (`openssl rand -hex 32`). |
 
-Optional (each feature returns `422 NOT_CONFIGURED` until set, or configure per workspace under **Integrations**): `RESEND_*` (email), `WHATSAPP_*`, `META_*` (lead ads), `SARVAM_*`, `SERPER_API_KEY`, `GROQ_API_KEY`, `SLACK_WEBHOOK_URL`, `OUTBOUND_WEBHOOK_URL`/`OUTBOUND_WEBHOOK_SECRET`, `CAMPAIGN_UNSUBSCRIBE_SECRET`.
+Provider credentials (each feature returns `422 NOT_CONFIGURED` until configured): workspaces save their own under **Integrations**. The env keys `SERPER_API_KEY`, `SARVAM_*`, `RESEND_*`, `WHATSAPP_*` and `META_*` are shared with workspaces that have no key of their own, but only for providers listed in:
 
-Outbound URLs (Slack, outbound webhook, workflow webhook actions) must be `https` and resolve to public addresses; private, loopback, link-local, CGNAT, multicast and cloud-metadata hosts are rejected when saving and again when sending. Slack URLs must be on `hooks.slack.com`.
+| Variable | Default | Notes |
+|---|---|---|
+| `PLATFORM_MANAGED_PROVIDERS` | empty (none shared) | Comma-separated providers (`serper,sarvam,resend,whatsapp,meta`) or `*`. Slack and outbound webhooks are never shared. |
+| `PLATFORM_MANAGED_ORG_IDS` | empty (all workspaces) | Restricts the shared keys to these workspace ids. |
+
+Operations:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `PORT` | `4000` | API port. |
+| `JOB_CONCURRENCY` | `10` | Jobs run at once per API instance. |
+| `JOB_RETENTION_DAYS` | `14` | Days to keep finished jobs (`0` = keep). |
+| `AUDIT_LOG_RETENTION_DAYS` | `365` | Days to keep audit-log rows (`0` = keep). |
+| `INTEGRATION_HEALTH_CHECK_MINUTES` | `60` | Minimum 5. |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `PUBLIC_WEBHOOK_BASE_URL` | `SUPABASE_URL` | Host of the lead-webhook function, used in the webhook URLs shown under Integrations. |
+| `DEV_AUTO_LOGIN`, `NEXT_PUBLIC_DEV_AUTO_LOGIN` | `false` | Development only; ignored when `NODE_ENV=production`. |
 
 ### Database (Supabase)
 
@@ -183,19 +119,19 @@ npx supabase db push            # applies supabase/migrations to the linked proj
 
 Local development instead: `npx supabase start` (Docker), then `npx supabase db reset` (local only; wipes local data) and use the printed local URL/keys in `.env`.
 
-### Edge function (Meta / Google lead forms)
+Schema changes go in a new timestamped migration; never edit one that has been applied. Migration `0019` drops the unused mock-era `users`, `companies` and `contacts` tables. It runs without `CASCADE`, so it fails instead of silently dropping anything built on those tables outside this repo.
+
+### Edge function
 
 ```bash
 npx supabase functions deploy lead-webhook --no-verify-jwt
 npx supabase secrets set META_APP_SECRET=... META_VERIFY_TOKEN=...
 ```
 
-Leads the function inserts queue a `lead.ingested` job (DB trigger); the API's job runner scores them and fires `lead.created` workflows/notifications, so the API must be running for that to happen.
-
 ### Auth redirect URLs
 
 In Supabase → Authentication → URL Configuration set **Site URL** to `WEB_APP_URL` and add to **Redirect URLs**:
-`<WEB_APP_URL>/auth/callback`, `<WEB_APP_URL>/reset-password` (password resets and invites). For Meta lead ads also register `META_REDIRECT_URI` (`<API_PUBLIC_URL>/api/integrations/meta/callback`) in the Meta app.
+`<WEB_APP_URL>/auth/callback**`, `<WEB_APP_URL>/reset-password**` (password resets and invites for new accounts) and `<WEB_APP_URL>/invitations/accept**` (invites for existing accounts). The `**` suffix allows the query strings the app appends. `supabase/config.toml` already lists these for local development on both `localhost:3000` and `127.0.0.1:3000`. For Meta lead ads also register `META_REDIRECT_URI` (`<API_PUBLIC_URL>/api/integrations/meta/callback`) in the Meta app.
 
 Invited users appear as **Pending** in Settings → Members (admins can *Resend invite* or *Revoke*) until they set a password / first sign in; pending members cannot be assigned as owners.
 
@@ -206,18 +142,57 @@ Migration `0009` moves pre-auth data into the **Default Workspace** (`00000000-0
 ### Run
 
 ```bash
-pnpm install
-pnpm --filter @ai-lead-gen/api dev     # API on PORT (default 4000)
+pnpm --filter @ai-lead-gen/api dev     # API on PORT (default 4000), restarts on change
 pnpm --filter @ai-lead-gen/web dev     # web on http://localhost:3000
+pnpm dev                               # both, via turbo
 ```
 
-### Tests
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `pnpm lint` | ESLint (flat config, `eslint.config.mjs`) over the whole repo |
+| `pnpm typecheck` | `tsc --noEmit` in api, web, database and tests |
+| `pnpm test` | Unit tests (no services needed) |
+| `pnpm test:api` | Vitest + supertest against the API and a local Supabase stack |
+| `pnpm test:e2e` | Playwright; starts the API on 4011 and web on 3011 |
+| `pnpm build` | API bundle (`apps/api/dist/index.js`, esbuild) and Next.js build |
+| `pnpm format` / `format:check` | Prettier (`.prettierrc.json`) |
+
+The API and e2e suites need a Supabase database. They use `TEST_SUPABASE_URL` / `_SERVICE_ROLE_KEY` / `_ANON_KEY` when set; otherwise they use the root `.env`, or a local stack found with `npx supabase status` (start one with `npx supabase start`).
+
+## Docker
+
+`apps/api/Dockerfile` bundles the API, `packages/database` and `services/*` into one file with esbuild, so the runtime image ships no `node_modules`. `apps/web/Dockerfile` builds Next.js with `output: "standalone"` (enabled by `NEXT_OUTPUT=standalone`, which the Dockerfile sets). The `NEXT_PUBLIC_*` values are build arguments because Next.js inlines them at build time.
 
 ```bash
-cd tests
-pnpm test:unit                  # Vitest unit tests (no services needed)
-npx supabase start              # API + e2e suites need a Supabase stack (local by default)
-pnpm test:api                   # Vitest + supertest against the API and local Supabase
-pnpm test:e2e                   # Playwright; starts API on 4011 and web on 3011
-pnpm typecheck
+docker compose up --build    # api on :4000, web on :3000, using .env
 ```
+
+The compose file targets a hosted Supabase project. With a local stack, containers cannot reach the host's `127.0.0.1`; see the comments in `docker-compose.yml`.
+
+## CI
+
+`.github/workflows/ci.yml` has three jobs:
+
+- **checks**: install, lint, typecheck, unit tests, API and web builds.
+- **docker**: builds both images (not pushed).
+- **integration**: starts Supabase with the Supabase CLI, then runs the API and Playwright suites.
+
+## Deploy notes
+
+- **Shared provider keys are now opt-in.** Deployments that relied on env keys (`SERPER_API_KEY`, `SARVAM_API_KEY`, `RESEND_*`, `WHATSAPP_*`, `META_*`) for all workspaces must set `PLATFORM_MANAGED_PROVIDERS` (e.g. `*`), or every workspace must save its own keys under Integrations.
+- **Email campaigns need `CAMPAIGN_UNSUBSCRIBE_SECRET`.** Without it, email sends fail as not configured.
+- **Per-workspace Meta apps** point their webhook at the edge function with `?org_id=<workspace id>`. The platform app keeps using the bare URL.
+- Apply migrations (`npx supabase db push`) before deploying the API, and redeploy the edge function when `supabase/functions` changes.
+- Run at least one API instance at all times; it is also the job worker. Give it about 30s to stop gracefully (`stop_grace_period` in compose).
+
+## Roadmap (not implemented)
+
+These features are planned but do not exist in the code yet:
+
+- Email and phone verification (deliverability / line-type checks).
+- Lead enrichment from third-party data providers.
+- HubSpot and Salesforce sync.
+- Semantic (embedding-based) deduplication. Dedupe currently matches exact phone, email, website domain and Maps listing keys.
+- LLM fallback when Sarvam is unavailable. Discovery currently falls back to rule-based scoring.
