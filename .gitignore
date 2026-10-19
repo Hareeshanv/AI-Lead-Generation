@@ -5,8 +5,12 @@ node_modules
 # Build outputs
 dist
 .next
+.next-preview
+.next-check
+.next-e2e
 out
 build
+*.tsbuildinfo
 
 # Environment files
 .env
@@ -39,3 +43,23 @@ Thumbs.db
 
 # Turbo
 .turbo
+
+# Playwright
+tests/e2e/.auth
+tests/e2e/.results
+tests/e2e/.report
+
+# Jetro VS Code extension (local state, credentials, cache)
+.jetro/
+
+# Local MCP configs (may contain tokens)
+.mcp.json
+.cursor/mcp.json
+
+# Jetro auto-generated assistant instructions (regenerated on every session start)
+AGENT.md
+CLAUDE.md
+.windsurfrules
+.github/copilot-instructions.md
+.cursor/rules/agent.mdc
+.agents/
