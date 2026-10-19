@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Lock, ArrowLeft } from "lucide-react";
 import { Input } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClassName } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/LoadingSkeleton";
 import { getSupabase } from "@/lib/supabase/client";
 import { authErrorMessage } from "@/lib/auth";
@@ -13,25 +13,57 @@ import { meApi } from "@/services/api";
 
 type LinkState = "checking" | "ready" | "invalid";
 
-/** Recovery links arrive via /auth/callback (session cookie set); invite links carry tokens in the URL hash. */
-async function establishSession(code: string | null): Promise<boolean> {
+/** Session `amr` methods Supabase records when the user signed in through a recovery or invite link. */
+const LINK_AUTH_METHODS = new Set(["recovery", "invite"]);
+/** A link session can only set a password this long after the link was opened. */
+const LINK_SESSION_MAX_AGE_S = 60 * 60;
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const part = token.split(".")[1];
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(part.length / 4) * 4, "=");
+    return JSON.parse(atob(base64));
+  } catch {
+    return null;
+  }
+}
+
+/** True only for sessions created by a recent recovery/invite link, not an ordinary sign-in. */
+function isLinkSession(accessToken: string): boolean {
+  const amr = decodeJwtPayload(accessToken)?.amr;
+  if (!Array.isArray(amr)) return false;
+  const nowS = Date.now() / 1000;
+  return amr.some(
+    (entry) =>
+      entry &&
+      LINK_AUTH_METHODS.has(String(entry.method)) &&
+      typeof entry.timestamp === "number" &&
+      nowS - entry.timestamp < LINK_SESSION_MAX_AGE_S
+  );
+}
+
+/**
+ * Recovery links arrive via /auth/callback (session cookie set); invite links carry tokens in the URL hash.
+ * An existing ordinary session is not enough: changing the password here needs a recovery/invite session.
+ */
+async function establishLinkSession(code: string | null): Promise<boolean> {
   const supabase = getSupabase();
-  const current = await supabase.auth.getSession();
-  if (current.data.session) return true;
 
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const accessToken = hash.get("access_token");
   const refreshToken = hash.get("refresh_token");
   if (accessToken && refreshToken) {
-    const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    return !error;
-  }
-  if (code) {
+    if (!LINK_AUTH_METHODS.has(hash.get("type") ?? "")) return false;
+    const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    if (error) return false;
+  } else if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    return !error;
+    if (error) return false;
   }
-  return false;
+
+  const { data } = await supabase.auth.getSession();
+  return Boolean(data.session && isLinkSession(data.session.access_token));
 }
 
 function ResetPasswordForm() {
@@ -45,11 +77,16 @@ function ResetPasswordForm() {
 
   useEffect(() => {
     let cancelled = false;
-    establishSession(searchParams.get("code"))
-      .then((ok) => !cancelled && setLinkState(ok ? "ready" : "invalid"))
-      .catch(() => !cancelled && setLinkState("invalid"));
+    // Implicit-flow recovery links are consumed by supabase-js itself, which then emits PASSWORD_RECOVERY.
+    const { data: subscription } = getSupabase().auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY" && !cancelled) setLinkState("ready");
+    });
+    establishLinkSession(searchParams.get("code"))
+      .then((ok) => !cancelled && setLinkState((prev) => (ok || prev === "ready" ? "ready" : "invalid")))
+      .catch(() => !cancelled && setLinkState((prev) => (prev === "ready" ? "ready" : "invalid")));
     return () => {
       cancelled = true;
+      subscription.subscription.unsubscribe();
     };
   }, [searchParams]);
 
@@ -83,10 +120,8 @@ function ResetPasswordForm() {
             This link is invalid or has already been used. Request a new one to continue.
           </p>
         </div>
-        <Link href="/forgot-password" className="block">
-          <Button variant="primary" className="w-full">
-            Request a new link
-          </Button>
+        <Link href="/forgot-password" className={buttonClassName({ className: "w-full" })}>
+          Request a new link
         </Link>
         <div className="text-center">
           <Link href="/login" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">

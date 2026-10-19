@@ -7,8 +7,9 @@ import type {
   LeadSourceIntegration,
   ProviderIntegration,
 } from "@/types";
+import type { LeadSourceRow } from "./rows";
 
-const mapLeadSource = (s: any): LeadSourceIntegration => ({
+const mapLeadSource = (s: LeadSourceRow): LeadSourceIntegration => ({
   id: s.id,
   platform: s.platform,
   pageName: s.pageName ?? null,
@@ -23,11 +24,12 @@ const mapLeadSource = (s: any): LeadSourceIntegration => ({
 /** Owned by the Integrations module. */
 export const integrationApi = {
   list: async (): Promise<IntegrationsOverview> => {
-    const data = await getData<IntegrationsOverview>("/integrations");
+    const data = await getData<Omit<IntegrationsOverview, "sources"> & { sources?: LeadSourceRow[] }>("/integrations");
     return {
       providers: data.providers ?? [],
       sources: (data.sources ?? []).map(mapLeadSource),
       metaConfigured: Boolean(data.metaConfigured),
+      metaWebhookUrl: data.metaWebhookUrl ?? null,
     };
   },
 
@@ -45,8 +47,8 @@ export const integrationApi = {
   getMetaConnectUrl: async (): Promise<string> => (await postData<{ url: string }>("/integrations/meta/connect-url")).url,
 
   createGoogle: async (name?: string): Promise<GoogleSourceCreated> => {
-    const data = await postData<GoogleSourceCreated>("/integrations/google", name ? { name } : {});
-    return { ...data, source: mapLeadSource(data.source ?? {}) };
+    const data = await postData<Omit<GoogleSourceCreated, "source"> & { source: LeadSourceRow }>("/integrations/google", name ? { name } : {});
+    return { ...data, source: mapLeadSource(data.source) };
   },
 
   removeSource: (id: string) => deleteData(`/integrations/${enc(id)}`),

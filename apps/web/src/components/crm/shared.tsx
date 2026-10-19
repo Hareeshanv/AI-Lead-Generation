@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ArrowRightLeft,
   CalendarClock,
@@ -22,7 +22,7 @@ import { QueryState } from "@/components/ui/QueryState";
 import { selectClassName } from "@/components/settings/shared";
 import { useMe } from "@/hooks/useMe";
 import { useMembers } from "@/hooks/useSettings";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import type { Activity, ActivityInput, ActivityType, ManualActivityType, Task, TaskInput, TaskPatch, TaskPriority } from "@/types";
 
 export const smallSelectClassName =
@@ -39,11 +39,12 @@ export function useMemberNames() {
   }, [members.data]);
   const assignable = useMemo(() => (members.data ?? []).filter((m) => m.status !== "pending"), [members.data]);
   const myId = me.data?.user.id;
-  return {
-    members: assignable,
-    nameOf: (id: string | null | undefined, fallback = "Unassigned") =>
+  const nameOf = useCallback(
+    (id: string | null | undefined, fallback = "Unassigned") =>
       !id ? fallback : id === myId ? `${names.get(id) ?? "You"} (you)` : names.get(id) ?? "Former member",
-  };
+    [names, myId]
+  );
+  return { members: assignable, nameOf };
 }
 
 export const OwnerSelect: React.FC<{
@@ -74,13 +75,6 @@ export const OwnerSelect: React.FC<{
     </select>
   );
 };
-
-export function formatDateTime(iso?: string | null): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
 
 export function formatRelative(iso?: string | null, now = Date.now()): string {
   if (!iso) return "";

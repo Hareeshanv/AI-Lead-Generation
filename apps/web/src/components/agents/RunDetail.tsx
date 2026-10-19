@@ -15,7 +15,8 @@ import { useHasRole } from "@/hooks/useMe";
 import { cn } from "@/lib/utils";
 import type { AgentRunDetail, IntentSignal, Lead } from "@/types";
 import { CampaignPickerModal } from "./CampaignPickerModal";
-import { RunStatusBadge, SOURCE_LABELS, ScoreBadge, formatDateTime, formatDuration } from "./shared";
+import { RunStatusBadge, SOURCE_LABELS, ScoreBadge, formatDuration } from "./shared";
+import { formatDateTime } from "@/lib/utils";
 
 type Tab = "leads" | "signals";
 

@@ -1,7 +1,23 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { activityApi, dealApi, taskApi } from "@/services/api";
 import { notifyError } from "@/lib/toast";
-import type { Activity, ActivityInput, Deal, DealInput, DealListParams, DealStage, Task, TaskInput, TaskListParams, TaskPatch } from "@/types";
+import type {
+  Activity,
+  ActivityInput,
+  BulkCreateDealsInput,
+  BulkCreateDealsResult,
+  Deal,
+  DealBoard,
+  DealBoardParams,
+  DealInput,
+  DealListParams,
+  DealStage,
+  PageParams,
+  Task,
+  TaskInput,
+  TaskListParams,
+  TaskPatch,
+} from "@/types";
 import { queryKeys } from "./queryKeys";
 import { useApiMutation } from "./useApiMutation";
 
@@ -10,6 +26,10 @@ const DEAL_RELATED = [queryKeys.deals.all, queryKeys.leads.all, queryKeys.tasks.
 
 export function useDeals(params: DealListParams = {}) {
   return useQuery({ queryKey: queryKeys.deals.list(params), queryFn: () => dealApi.list(params) });
+}
+
+export function useDealBoard(params: DealBoardParams = {}) {
+  return useQuery({ queryKey: queryKeys.deals.board(params), queryFn: () => dealApi.board(params), placeholderData: keepPreviousData });
 }
 
 export function useDeal(id: string | undefined) {
@@ -94,6 +114,80 @@ export function useMoveDeal(params: DealListParams = {}) {
   });
 }
 
+/** Moves `deal` to the top of `stage` and shifts its value between the column totals. */
+function moveOnBoard(board: DealBoard, deal: Deal, stage: DealStage, position: number | undefined, lostReason?: string | null): DealBoard {
+  const moved: Deal = {
+    ...deal,
+    stage,
+    position: position ?? deal.position,
+    lostReason: stage === "Closed Lost" ? lostReason ?? null : deal.lostReason,
+  };
+  const weighted = (deal.value * deal.probability) / 100;
+  return {
+    stages: board.stages.map((col) => {
+      if (col.stage === deal.stage && col.stage !== stage) {
+        return {
+          ...col,
+          deals: col.deals.filter((d) => d.id !== deal.id),
+          count: Math.max(0, col.count - 1),
+          value: col.value - deal.value,
+          weighted: col.weighted - weighted,
+        };
+      }
+      if (col.stage === stage) {
+        const rest = col.deals.filter((d) => d.id !== deal.id);
+        const added = col.stage === deal.stage ? 0 : 1;
+        return {
+          ...col,
+          deals: [moved, ...rest],
+          count: col.count + added,
+          value: col.value + added * deal.value,
+          weighted: col.weighted + added * weighted,
+        };
+      }
+      return col;
+    }),
+  };
+}
+
+/**
+ * Kanban move on the board loaded with `params`: the card moves immediately and snaps back
+ * (with an error toast) if the API rejects the change.
+ */
+export function useMoveBoardDeal(params: DealBoardParams = {}) {
+  const queryClient = useQueryClient();
+  const key = queryKeys.deals.board(params);
+  return useMutation<Deal, Error, MoveDealVars, { previous?: DealBoard }>({
+    mutationFn: ({ id, stage, position, lostReason }) => dealApi.updateStage(id, stage, { position, lostReason }),
+    onMutate: async ({ id, stage, position, lostReason }) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<DealBoard>(key);
+      const deal = previous?.stages.flatMap((col) => col.deals).find((d) => d.id === id);
+      if (previous && deal) queryClient.setQueryData<DealBoard>(key, moveOnBoard(previous, deal, stage, position, lostReason));
+      return { previous };
+    },
+    onError: (err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      notifyError(err, "Couldn't move the deal");
+    },
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.deals.all }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.leads.all }),
+      ]),
+  });
+}
+
+/** One deal per lead in a single request (POST /api/deals/bulk). */
+export function useBulkCreateDeals() {
+  return useApiMutation<BulkCreateDealsResult, BulkCreateDealsInput>({
+    mutationFn: dealApi.bulkCreate,
+    invalidate: DEAL_RELATED,
+    successMessage: (r) =>
+      `${r.created} deal${r.created === 1 ? "" : "s"} created${r.missing.length ? ` (${r.missing.length} lead${r.missing.length === 1 ? "" : "s"} not found)` : ""}`,
+  });
+}
+
 export function useAddDealActivity(dealId: string) {
   return useApiMutation<Activity, ActivityInput>({
     mutationFn: (input) => dealApi.addActivity(dealId, input),
@@ -112,6 +206,10 @@ export function useAddDealTask(dealId: string) {
 
 export function useTasks(params: TaskListParams = {}) {
   return useQuery({ queryKey: queryKeys.tasks.list(params), queryFn: () => taskApi.list(params) });
+}
+
+export function useTasksPage(params: TaskListParams & PageParams) {
+  return useQuery({ queryKey: queryKeys.tasks.page(params), queryFn: () => taskApi.listPage(params), placeholderData: keepPreviousData });
 }
 
 export function useUpdateTask() {

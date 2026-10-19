@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CalendarClock, ExternalLink, Pencil, RotateCcw, ThumbsDown, Trophy, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -20,11 +20,12 @@ import {
   useUpdateDeal,
   useUpdateTask,
 } from "@/hooks/useDeals";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { useHasRole, useMe } from "@/hooks/useMe";
-import { cn, formatCurrency } from "@/lib/utils";
+import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
 import type { Deal, DealStage } from "@/types";
 import { DEAL_STAGES, DealFormModal } from "./DealFormModal";
-import { ActivityTimeline, OwnerSelect, TaskList, formatDateTime, smallSelectClassName } from "./shared";
+import { ActivityTimeline, OwnerSelect, TaskList, smallSelectClassName } from "./shared";
 
 const isClosed = (stage: DealStage) => stage === "Closed Won" || stage === "Closed Lost";
 
@@ -99,13 +100,8 @@ export const DealDrawer: React.FC<{
   const [isEditing, setIsEditing] = useState(false);
   const [isLostOpen, setIsLostOpen] = useState(false);
   const [tab, setTab] = useState<"activity" | "tasks">("activity");
-
-  useEffect(() => {
-    if (!dealId) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !isEditing && !isLostOpen && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [dealId, isEditing, isLostOpen, onClose]);
+  const drawerRef = useRef<HTMLElement>(null);
+  useFocusTrap(drawerRef, Boolean(dealId), () => !isEditing && !isLostOpen && onClose());
 
   if (!dealId) return null;
   const deal = dealQuery.data;
@@ -124,10 +120,12 @@ export const DealDrawer: React.FC<{
     <>
       <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} aria-hidden="true" />
       <aside
+        ref={drawerRef}
         role="dialog"
         aria-modal="true"
         aria-label="Deal details"
-        className="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl"
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 z-40 flex w-full max-w-xl flex-col border-l border-border bg-background shadow-2xl focus:outline-none"
       >
         <div className="flex items-start justify-between gap-3 border-b border-border p-5">
           <div className="min-w-0">

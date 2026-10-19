@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   DndContext,
@@ -16,7 +16,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import { CalendarClock, Check, GripVertical, Kanban, Plus, Search, User } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, ChevronRight, GripVertical, Kanban, Plus, Search, User } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -24,13 +24,16 @@ import { QueryState } from "@/components/ui/QueryState";
 import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
 import { DealDrawer, LostReasonModal } from "@/components/crm/DealDrawer";
 import { DEAL_STAGES, DealFormModal } from "@/components/crm/DealFormModal";
-import { formatDateTime, formatRelative, smallSelectClassName, useMemberNames } from "@/components/crm/shared";
-import { useDeals, useMoveDeal, useTasks, useUpdateTask } from "@/hooks/useDeals";
+import { formatRelative, smallSelectClassName, useMemberNames } from "@/components/crm/shared";
+import { useDealBoard, useMoveBoardDeal, useTasksPage, useUpdateTask } from "@/hooks/useDeals";
+import { useDebounced } from "@/hooks/useDebounced";
 import { useMe } from "@/hooks/useMe";
-import { cn, formatCurrency } from "@/lib/utils";
-import type { Deal, DealStage } from "@/types";
+import { cn, formatCurrency, formatDateTime } from "@/lib/utils";
+import type { Deal, DealBoard, DealBoardColumn, DealBoardParams, DealStage } from "@/types";
 
-const BOARD_PARAMS = {};
+/** Cards loaded per column, and per "Load more" click. */
+const STAGE_PAGE = 50;
+const FOLLOW_UPS_PAGE = 9;
 
 const STAGE_ACCENT: Record<DealStage, string> = {
   New: "bg-slate-400",
@@ -43,14 +46,29 @@ const STAGE_ACCENT: Record<DealStage, string> = {
 
 const isClosed = (stage: DealStage) => stage === "Closed Won" || stage === "Closed Lost";
 
-function totals(deals: Deal[]) {
-  let value = 0;
+function summarize(board: DealBoard | undefined) {
+  let openCount = 0;
+  let openValue = 0;
   let weighted = 0;
-  for (const d of deals) {
-    value += d.value;
-    weighted += (d.value * d.probability) / 100;
+  let won: DealBoardColumn | undefined;
+  let lost: DealBoardColumn | undefined;
+  for (const col of board?.stages ?? []) {
+    if (col.stage === "Closed Won") won = col;
+    else if (col.stage === "Closed Lost") lost = col;
+    else {
+      openCount += col.count;
+      openValue += col.value;
+      weighted += col.weighted;
+    }
   }
-  return { value, weighted };
+  const closedCount = (won?.count ?? 0) + (lost?.count ?? 0);
+  return {
+    openCount,
+    openValue,
+    weighted,
+    wonValue: won?.value ?? 0,
+    winRate: closedCount > 0 ? Math.round(((won?.count ?? 0) / closedCount) * 100) : null,
+  };
 }
 
 const DealCard: React.FC<{ deal: Deal; ownerName: string; overlay?: boolean; onOpen?: () => void }> = ({
@@ -109,13 +127,17 @@ const DealCard: React.FC<{ deal: Deal; ownerName: string; overlay?: boolean; onO
 
 const StageColumn: React.FC<{
   stage: DealStage;
-  deals: Deal[];
+  column: DealBoardColumn | undefined;
   nameOf: (id: string | null | undefined) => string;
   onOpen: (deal: Deal) => void;
   onAdd: () => void;
-}> = ({ stage, deals, nameOf, onOpen, onAdd }) => {
+  onLoadMore: () => void;
+}> = ({ stage, column, nameOf, onOpen, onAdd, onLoadMore }) => {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
-  const { value, weighted } = totals(deals);
+  const deals = column?.deals ?? [];
+  const count = column?.count ?? 0;
+  const value = column?.value ?? 0;
+  const weighted = column?.weighted ?? 0;
   return (
     <section
       ref={setNodeRef}
@@ -130,7 +152,7 @@ const StageColumn: React.FC<{
           <span className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-foreground">
             <span className={cn("h-2 w-2 rounded-full", STAGE_ACCENT[stage])} /> {stage}
           </span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{deals.length}</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{count}</span>
         </div>
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <span className="font-medium text-foreground tabular-nums">{formatCurrency(value)}</span>
@@ -143,6 +165,15 @@ const StageColumn: React.FC<{
         ))}
         {deals.length === 0 && (
           <p className="rounded-lg border border-dashed border-border py-6 text-center text-[11px] text-muted-foreground">Drop deals here</p>
+        )}
+        {deals.length < count && (
+          <button
+            type="button"
+            onClick={onLoadMore}
+            className="w-full rounded-lg border border-border py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            Load more ({count - deals.length} more)
+          </button>
         )}
       </div>
       {!isClosed(stage) && (
@@ -159,21 +190,45 @@ const StageColumn: React.FC<{
 };
 
 const FollowUps: React.FC = () => {
-  const tasks = useTasks({ assignee: "me", status: "open", due: "week" });
+  const [page, setPage] = useState(1);
+  const tasks = useTasksPage({ assignee: "me", status: "open", due: "week", page, pageSize: FOLLOW_UPS_PAGE });
   const updateTask = useUpdateTask();
+  const meta = tasks.data?.meta;
+  const lastPage = meta ? Math.max(1, meta.totalPages) : 1;
+
+  useEffect(() => {
+    if (page > lastPage) setPage(lastPage);
+  }, [page, lastPage]);
+
   return (
     <div className="rounded-xl border border-border bg-card p-4">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-        <CalendarClock className="h-4 w-4 text-muted-foreground" /> My follow-ups (next 7 days)
-      </h2>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <CalendarClock className="h-4 w-4 text-muted-foreground" /> My follow-ups (next 7 days)
+        </h2>
+        {meta && meta.total > FOLLOW_UPS_PAGE && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="mr-1 tabular-nums">
+              {(page - 1) * FOLLOW_UPS_PAGE + 1}–{Math.min(page * FOLLOW_UPS_PAGE, meta.total)} of {meta.total}
+            </span>
+            <Button variant="ghost" size="sm" aria-label="Previous follow-ups" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" aria-label="Next follow-ups" disabled={page >= lastPage} onClick={() => setPage((p) => p + 1)}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+      </div>
       <QueryState
         query={tasks}
+        isEmpty={(result) => result.data.length === 0}
         loading={<LoadingSkeleton className="h-10 w-full" />}
         empty={{ title: "Nothing due this week", description: "Follow-ups you add on leads and deals appear here." }}
       >
-        {(list) => (
-          <ul className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {list.slice(0, 9).map((t) => {
+        {({ data: list }) => (
+          <ul className={cn("grid gap-2 md:grid-cols-2 xl:grid-cols-3", tasks.isPlaceholderData && "opacity-60")}>
+            {list.map((t) => {
               const overdue = t.dueAt && new Date(t.dueAt).getTime() < Date.now();
               const href = t.leadId ? `/leads/${t.leadId}` : null;
               return (
@@ -212,16 +267,23 @@ const FollowUps: React.FC = () => {
 };
 
 export default function CRMPage() {
-  const dealsQuery = useDeals(BOARD_PARAMS);
-  const moveDeal = useMoveDeal(BOARD_PARAMS);
   const me = useMe();
   const { members, nameOf } = useMemberNames();
   const [search, setSearch] = useState("");
   const [ownerFilter, setOwnerFilter] = useState<string>("all");
+  const [expand, setExpand] = useState<Partial<Record<DealStage, number>>>({});
   const [createStage, setCreateStage] = useState<DealStage | null>(null);
   const [openDealId, setOpenDealId] = useState<string | null>(null);
   const [activeDeal, setActiveDeal] = useState<Deal | null>(null);
   const [pendingLost, setPendingLost] = useState<Deal | null>(null);
+
+  const q = useDebounced(search.trim(), 300);
+  const boardParams = useMemo<DealBoardParams>(
+    () => ({ ownerId: ownerFilter === "all" ? undefined : ownerFilter, q: q || undefined, perStage: STAGE_PAGE, expand }),
+    [ownerFilter, q, expand]
+  );
+  const board = useDealBoard(boardParams);
+  const moveDeal = useMoveBoardDeal(boardParams);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -229,41 +291,20 @@ export default function CRMPage() {
   );
 
   const myId = me.data?.user.id;
-  const visible = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return (dealsQuery.data ?? []).filter((d) => {
-      if (ownerFilter === "me" && d.ownerId !== myId) return false;
-      if (ownerFilter === "unassigned" && d.ownerId) return false;
-      if (ownerFilter !== "all" && ownerFilter !== "me" && ownerFilter !== "unassigned" && d.ownerId !== ownerFilter) return false;
-      if (!needle) return true;
-      return [d.title, d.company, d.contact, d.lead?.name].some((v) => v && v.toLowerCase().includes(needle));
-    });
-  }, [dealsQuery.data, search, ownerFilter, myId]);
+  const filtered = ownerFilter !== "all" || q !== "";
 
-  const byStage = useMemo(() => {
-    const map = new Map<DealStage, Deal[]>(DEAL_STAGES.map((s) => [s, []]));
-    for (const d of visible) map.get(d.stage)?.push(d);
-    for (const list of map.values()) list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    return map;
-  }, [visible]);
+  const byStage = useMemo(
+    () => new Map<DealStage, DealBoardColumn>((board.data?.stages ?? []).map((col) => [col.stage, col])),
+    [board.data]
+  );
+  const summary = useMemo(() => summarize(board.data), [board.data]);
 
-  const summary = useMemo(() => {
-    const open = visible.filter((d) => !isClosed(d.stage));
-    const won = visible.filter((d) => d.stage === "Closed Won");
-    const lost = visible.filter((d) => d.stage === "Closed Lost");
-    const openTotals = totals(open);
-    return {
-      openCount: open.length,
-      openValue: openTotals.value,
-      weighted: openTotals.weighted,
-      wonValue: totals(won).value,
-      winRate: won.length + lost.length > 0 ? Math.round((won.length / (won.length + lost.length)) * 100) : null,
-    };
-  }, [visible]);
+  const loadMore = (stage: DealStage) =>
+    setExpand((prev) => ({ ...prev, [stage]: (byStage.get(stage)?.deals.length ?? 0) + STAGE_PAGE }));
 
   const move = (deal: Deal, stage: DealStage, lostReason?: string | null) => {
     if (deal.stage === stage && stage !== "Closed Lost") return;
-    const top = byStage.get(stage)?.[0]?.position;
+    const top = byStage.get(stage)?.deals[0]?.position;
     moveDeal.mutate({ id: deal.id, stage, position: top !== undefined ? top - 1 : undefined, lostReason });
   };
 
@@ -300,9 +341,9 @@ export default function CRMPage() {
           <div key={kpi.label} className="rounded-xl border border-border bg-card p-4">
             <div className="text-xs text-muted-foreground">{kpi.label}</div>
             <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">
-              {dealsQuery.isLoading ? <LoadingSkeleton className="h-7 w-24" /> : kpi.value}
+              {board.isLoading ? <LoadingSkeleton className="h-7 w-24" /> : kpi.value}
             </div>
-            {kpi.hint && !dealsQuery.isLoading && <div className="text-[11px] text-muted-foreground">{kpi.hint}</div>}
+            {kpi.hint && !board.isLoading && <div className="text-[11px] text-muted-foreground">{kpi.hint}</div>}
           </div>
         ))}
       </div>
@@ -328,7 +369,8 @@ export default function CRMPage() {
       </div>
 
       <QueryState
-        query={dealsQuery}
+        query={board}
+        isEmpty={(data) => !filtered && data.stages.every((col) => col.count === 0)}
         errorTitle="Couldn't load the pipeline"
         loading={
           <div className="flex gap-4 overflow-hidden">
@@ -350,15 +392,16 @@ export default function CRMPage() {
       >
         {() => (
           <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDeal(null)}>
-            <div className="flex gap-4 overflow-x-auto pb-4">
+            <div className={cn("flex gap-4 overflow-x-auto pb-4 transition-opacity", board.isPlaceholderData && "opacity-60")}>
               {DEAL_STAGES.map((stage) => (
                 <StageColumn
                   key={stage}
                   stage={stage}
-                  deals={byStage.get(stage) ?? []}
+                  column={byStage.get(stage)}
                   nameOf={nameOf}
                   onOpen={(d) => setOpenDealId(d.id)}
                   onAdd={() => setCreateStage(stage)}
+                  onLoadMore={() => loadMore(stage)}
                 />
               ))}
             </div>

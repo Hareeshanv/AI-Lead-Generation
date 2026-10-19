@@ -16,7 +16,7 @@ export const AddToCampaignModal: React.FC<{
   leadIds: string[];
   onDone?: () => void;
 }> = ({ isOpen, onClose, leadIds, onDone }) => {
-  const campaigns = useCampaigns({ pageSize: 100 });
+  const campaigns = useCampaigns({ pageSize: 100 }, { enabled: isOpen });
   const addLeads = useAddLeadsToCampaign();
   const [campaignId, setCampaignId] = useState<string | null>(null);
 

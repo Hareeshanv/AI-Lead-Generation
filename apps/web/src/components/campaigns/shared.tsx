@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Mail, MessageCircle } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
@@ -76,24 +76,8 @@ export const EXCLUSION_LABELS: Record<ExclusionReason, string> = {
   missing_address: "No valid email / phone",
 };
 
-export function useDebounced<T>(value: T, delayMs = 400): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [value, delayMs]);
-  return debounced;
-}
-
 export function formatPercent(value: number): string {
   return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
-}
-
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export function formatDelay(minutes: number): string {

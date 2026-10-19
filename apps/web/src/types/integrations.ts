@@ -45,6 +45,8 @@ export interface IntegrationsOverview {
   providers: ProviderIntegration[];
   sources: LeadSourceIntegration[];
   metaConfigured: boolean;
+  /** Leadgen webhook callback for this workspace's own Meta app; null when the API has no webhook host configured. */
+  metaWebhookUrl: string | null;
 }
 
 export interface IntegrationCheck {

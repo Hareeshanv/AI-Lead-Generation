@@ -11,6 +11,7 @@ import { useUpdateWorkspaceSettings, useWorkspaceSettings } from "@/hooks/useSet
 import { formatCurrency } from "@/lib/utils";
 import type { WorkspaceSettings as WorkspaceSettingsData } from "@/types";
 import { Field, SectionTitle, fieldError, selectClassName } from "./shared";
+import { DiscoverySettingsCard } from "./DiscoverySettingsCard";
 
 const COMMON_CURRENCIES = ["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD"];
 const FALLBACK_TIMEZONES = ["Asia/Kolkata", "UTC", "Asia/Dubai", "Asia/Singapore", "Europe/London", "America/New_York"];
@@ -25,7 +26,16 @@ function supportedTimezones(): string[] {
 
 export function WorkspaceSettings() {
   const query = useWorkspaceSettings();
-  return <QueryState query={query}>{(data) => <WorkspaceForm data={data} />}</QueryState>;
+  return (
+    <QueryState query={query}>
+      {(data) => (
+        <div className="space-y-6">
+          <WorkspaceForm data={data} />
+          <DiscoverySettingsCard discovery={data.settings.discovery} />
+        </div>
+      )}
+    </QueryState>
+  );
 }
 
 function WorkspaceForm({ data }: { data: WorkspaceSettingsData }) {

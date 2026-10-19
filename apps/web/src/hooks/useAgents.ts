@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { agentApi, isActiveRun } from "@/services/api";
-import type { AgentRun, ConvertSignalsResult, Lead, StartAgentRunInput } from "@/types";
+import { agentApi, dealApi, isActiveRun } from "@/services/api";
+import type { AgentRun, BulkCreateDealsResult, ConvertSignalsResult, Lead, StartAgentRunInput } from "@/types";
 import { queryKeys } from "./queryKeys";
 import { useApiMutation } from "./useApiMutation";
 
@@ -72,17 +72,12 @@ export function useConvertSignals() {
   });
 }
 
-/** One POST /api/deals per lead; partial failures are reported in the success toast. */
+/** One deal per lead via POST /api/deals/bulk; leads that no longer exist are reported in the toast. */
 export function useCreateDealsForLeads() {
-  return useApiMutation<{ created: number; failed: number }, Pick<Lead, "id" | "name" | "company">[]>({
-    mutationFn: async (leads) => {
-      const results = await Promise.allSettled(leads.map((l) => agentApi.createDealForLead(l)));
-      const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-      if (failed.length === leads.length) throw failed[0].reason;
-      return { created: leads.length - failed.length, failed: failed.length };
-    },
-    invalidate: [queryKeys.deals.all],
+  return useApiMutation<BulkCreateDealsResult, Pick<Lead, "id">[]>({
+    mutationFn: (leads) => dealApi.bulkCreate({ leadIds: leads.map((l) => l.id) }),
+    invalidate: [queryKeys.deals.all, queryKeys.leads.all, queryKeys.tasks.all],
     successMessage: (r) =>
-      `${r.created} deal${r.created === 1 ? "" : "s"} created${r.failed ? ` (${r.failed} failed)` : ""}`,
+      `${r.created} deal${r.created === 1 ? "" : "s"} created${r.missing.length ? ` (${r.missing.length} failed)` : ""}`,
   });
 }

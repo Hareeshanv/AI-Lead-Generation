@@ -30,7 +30,7 @@ import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState, LoadingState, QueryState } from "@/components/ui/QueryState";
 import { SourcePlatformBadge, AudienceBadge, GuardianConsentBadge } from "@/components/ui/LeadBadges";
-import { ActivityTimeline, OwnerSelect, TaskList, formatDateTime, formatRelative, smallSelectClassName } from "@/components/crm/shared";
+import { ActivityTimeline, OwnerSelect, TaskList, formatRelative, smallSelectClassName } from "@/components/crm/shared";
 import { DealFormModal } from "@/components/crm/DealFormModal";
 import { DealDrawer } from "@/components/crm/DealDrawer";
 import { LeadFormModal } from "@/components/leads/LeadFormModal";
@@ -49,7 +49,7 @@ import {
 import { useDeals, useDeleteActivity, useDeleteTask, useMoveDeal, useUpdateTask } from "@/hooks/useDeals";
 import { useHasRole, useMe } from "@/hooks/useMe";
 import { ApiError } from "@/services/api/http";
-import { cn, formatConsentTime, formatCurrency } from "@/lib/utils";
+import { cn, formatConsentTime, formatCurrency, formatDateTime } from "@/lib/utils";
 import { LEAD_STATUSES, leadSourceLabel, scoreBadgeClass } from "@/lib/analytics";
 import type { Deal, DealStage, LeadStatus } from "@/types";
 

@@ -1,5 +1,5 @@
 import { dbClient } from "../client";
-import { dbError } from "../helpers";
+import { dbError, type PageResult, type PageSpec } from "../helpers";
 
 export type ActivityType =
   | "note"
@@ -98,6 +98,30 @@ export const activitiesDb = {
   },
 };
 
+export interface TaskListFilter {
+  leadId?: string;
+  dealId?: string;
+  assigneeId?: string;
+  status?: TaskStatus;
+  dueBefore?: string;
+  withContext?: boolean;
+}
+
+/** Filtered tasks, soonest due first (undated last). */
+function taskQuery(orgId: string, filter: TaskListFilter, withCount = false) {
+  const columns = filter.withContext ? "*, lead:leads(id, name, company), deal:deals(id, title, stage)" : "*";
+  let query = dbClient
+    .from("tasks")
+    .select(columns, withCount ? { count: "exact" } : undefined)
+    .eq("org_id", orgId);
+  if (filter.leadId) query = query.eq("lead_id", filter.leadId);
+  if (filter.dealId) query = query.eq("deal_id", filter.dealId);
+  if (filter.assigneeId) query = query.eq("assignee_id", filter.assigneeId);
+  if (filter.status) query = query.eq("status", filter.status);
+  if (filter.dueBefore) query = query.lte("due_at", filter.dueBefore);
+  return query.order("due_at", { ascending: true, nullsFirst: false });
+}
+
 export const tasksDb = {
   async create(orgId: string, input: TaskInput) {
     const { data, error } = await dbClient
@@ -126,30 +150,17 @@ export const tasksDb = {
   },
 
   /** withContext adds `lead: { id, name, company }` and `deal: { id, title, stage }` to each row. */
-  async list(
-    orgId: string,
-    filter: {
-      leadId?: string;
-      dealId?: string;
-      assigneeId?: string;
-      status?: TaskStatus;
-      dueBefore?: string;
-      limit?: number;
-      withContext?: boolean;
-    }
-  ) {
-    const columns = filter.withContext ? "*, lead:leads(id, name, company), deal:deals(id, title, stage)" : "*";
-    let query = dbClient.from("tasks").select(columns).eq("org_id", orgId);
-    if (filter.leadId) query = query.eq("lead_id", filter.leadId);
-    if (filter.dealId) query = query.eq("deal_id", filter.dealId);
-    if (filter.assigneeId) query = query.eq("assignee_id", filter.assigneeId);
-    if (filter.status) query = query.eq("status", filter.status);
-    if (filter.dueBefore) query = query.lte("due_at", filter.dueBefore);
-    const { data, error } = await query
-      .order("due_at", { ascending: true, nullsFirst: false })
-      .limit(filter.limit ?? 200);
+  async list(orgId: string, filter: TaskListFilter & { limit?: number }) {
+    const { data, error } = await taskQuery(orgId, filter).limit(filter.limit ?? 200);
     if (error) throw dbError("list tasks", error);
     return data || [];
+  },
+
+  /** One page of `list`, with the total matching count. */
+  async listPage(orgId: string, filter: TaskListFilter, page: Pick<PageSpec, "from" | "to">): Promise<PageResult<any>> {
+    const { data, error, count } = await taskQuery(orgId, filter, true).order("id", { ascending: true }).range(page.from, page.to);
+    if (error) throw dbError("list tasks", error);
+    return { rows: data || [], total: count ?? 0 };
   },
 
   /** Returns null when the org has no such task. */

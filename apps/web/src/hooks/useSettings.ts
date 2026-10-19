@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { invitationsApi, membersApi, settingsApi } from "@/services/api";
-import type { InviteResult, ResendInviteResult, Role, WorkspaceSettings, WorkspaceSettingsPatch } from "@/types";
+import { invitationsApi, meApi, membersApi, settingsApi } from "@/services/api";
+import { switchWorkspace } from "@/lib/auth";
+import type { InviteResult, Me, PendingInvite, ResendInviteResult, Role, WorkspaceSettings, WorkspaceSettingsPatch } from "@/types";
 import { queryKeys } from "./queryKeys";
 import { useApiMutation } from "./useApiMutation";
 
@@ -65,11 +66,31 @@ export function useInviteMember() {
     mutationFn: ({ email, role }) => invitationsApi.create(email, role),
     invalidate: [queryKeys.invitations, queryKeys.members],
     successMessage: (result) =>
-      result.outcome === "added"
-        ? `${result.invitation.email} already had an account and was added to the workspace`
-        : result.outcome === "invited"
-          ? `Invitation sent to ${result.invitation.email}`
-          : `Invitation saved, but the email could not be sent${result.emailError ? `: ${result.emailError}` : ""}`,
+      result.outcome === "invited"
+        ? `Invitation sent to ${result.invitation.email}`
+        : `Invitation saved, but the email could not be sent${result.emailError ? `: ${result.emailError}` : ""}`,
+  });
+}
+
+/** Workspaces that invited the signed-in user (existing accounts must accept explicitly). */
+export function usePendingInvitations() {
+  return useQuery({ queryKey: queryKeys.myInvitations, queryFn: meApi.invitations, staleTime: 5 * 60_000 });
+}
+
+/** Joins the workspace and switches to it (full reload, so the old workspace's cache is dropped). */
+export function useAcceptPendingInvitation() {
+  return useApiMutation<Me, PendingInvite>({
+    mutationFn: (invite) => meApi.acceptPendingInvitation(invite.orgId),
+    successMessage: (_me, invite) => `You joined ${invite.orgName}`,
+    onSuccess: (_me, invite) => switchWorkspace(invite.orgId),
+  });
+}
+
+export function useDeclinePendingInvitation() {
+  return useApiMutation<void, PendingInvite>({
+    mutationFn: (invite) => meApi.declinePendingInvitation(invite.orgId),
+    invalidate: [queryKeys.myInvitations],
+    successMessage: (_r, invite) => `Declined the invitation to ${invite.orgName}`,
   });
 }
 

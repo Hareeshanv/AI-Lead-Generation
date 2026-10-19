@@ -25,7 +25,7 @@ function validate(query: string, location: string, sources: DiscoverySource[], m
   const l = location.trim();
   if (q.length < 2) errors.query = "Enter at least 2 characters.";
   else if (q.length > 200) errors.query = "Keep it under 200 characters.";
-  if (l.length < 2) errors.location = "Enter a city or area.";
+  if (l.length === 1) errors.location = "Enter a city or area, or leave it empty.";
   else if (l.length > 120) errors.location = "Keep it under 120 characters.";
   if (sources.length === 0) errors.sources = "Pick at least one source.";
   const n = Number(maxResults.trim());
@@ -103,7 +103,7 @@ export const RunForm: React.FC<{ agent: Agent; onStarted: (run: AgentRun) => voi
           </div>
           <div>
             <label htmlFor="agent-location" className="text-xs font-medium text-muted-foreground mb-1.5 block">
-              Location
+              Location <span className="font-normal">(optional)</span>
             </label>
             <Input
               id="agent-location"

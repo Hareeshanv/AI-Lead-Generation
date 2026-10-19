@@ -8,8 +8,9 @@ import type {
   WorkflowSubjectOption,
   WorkflowTestInput,
 } from "@/types";
+import type { DealRow, LeadRow } from "./rows";
 
-function rowsOf(body: unknown): any[] {
+function rowsOf<T>(body: unknown): T[] {
   if (Array.isArray(body)) return body;
   const data = (body as { data?: unknown } | null)?.data;
   return Array.isArray(data) ? data : [];
@@ -34,7 +35,7 @@ export const workflowApi = {
   /** Lead picker for the test dialog (reads the Leads module's list endpoint). */
   searchLeads: async (q: string): Promise<WorkflowSubjectOption[]> => {
     const res = await http.get("/leads", { params: { q: q || undefined, pageSize: 20 } });
-    return rowsOf(res.data).map((l: any) => ({
+    return rowsOf<Pick<LeadRow, "id" | "name" | "email" | "company" | "status">>(res.data).map((l) => ({
       id: String(l.id),
       label: l.name || l.email || "Unnamed lead",
       detail: [l.company, l.status].filter(Boolean).join(" · "),
@@ -44,7 +45,7 @@ export const workflowApi = {
   /** Deal picker for the test dialog (reads the CRM module's list endpoint). */
   searchDeals: async (q: string): Promise<WorkflowSubjectOption[]> => {
     const res = await http.get("/deals", { params: { q: q || undefined } });
-    return rowsOf(res.data).slice(0, 20).map((d: any) => ({
+    return rowsOf<Pick<DealRow, "id" | "title" | "company" | "stage">>(res.data).slice(0, 20).map((d) => ({
       id: String(d.id),
       label: d.title || d.company || "Untitled deal",
       detail: [d.company, d.stage].filter(Boolean).join(" · "),

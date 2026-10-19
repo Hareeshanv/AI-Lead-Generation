@@ -19,6 +19,12 @@ export function setActiveOrgId(orgId: string | null): void {
   else window.localStorage.removeItem(ACTIVE_ORG_KEY);
 }
 
+/** Makes `orgId` the active workspace and reloads so no cached data from the previous one survives. */
+export function switchWorkspace(orgId: string, path = "/dashboard"): void {
+  setActiveOrgId(orgId);
+  window.location.assign(path);
+}
+
 /** Signs out and hard-navigates so every cached query and store is dropped. */
 export async function signOut(): Promise<void> {
   try {

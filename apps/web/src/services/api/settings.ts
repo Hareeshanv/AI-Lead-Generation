@@ -1,10 +1,11 @@
-import { deleteData, enc, getData, patchData, postData } from "./http";
+import { deleteData, enc, getData, http, patchData, postData } from "./http";
 import type {
   Invitation,
   InviteResult,
   Me,
   Member,
   NotificationPrefs,
+  PendingInvite,
   ResendInviteResult,
   Role,
   WorkspaceSettings,
@@ -21,7 +22,13 @@ export interface UpdateMeInput {
 export const meApi = {
   get: () => getData<Me>("/me"),
   update: (input: UpdateMeInput) => patchData<Me>("/me", input),
+  /** Joins with the token from an invitation email; the API checks it was sent to the signed-in email. */
   acceptInvitation: (token: string) => postData<Me>("/me/invitations/accept", { token }),
+  invitations: () => getData<PendingInvite[]>("/me/invitations"),
+  acceptPendingInvitation: (orgId: string) => postData<Me>(`/me/invitations/${enc(orgId)}/accept`),
+  declinePendingInvitation: async (orgId: string): Promise<void> => {
+    await http.post(`/me/invitations/${enc(orgId)}/decline`);
+  },
 };
 
 export const settingsApi = {

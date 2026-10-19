@@ -39,15 +39,26 @@ http.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
 
 type RetriableConfig = InternalAxiosRequestConfig & { _orgRetried?: boolean };
 
-function toApiError(err: AxiosError<any>): ApiError {
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+function toApiError(err: AxiosError): ApiError {
   if (!err.response) {
     if (err.code === "ECONNABORTED") return new ApiError(0, { code: "TIMEOUT", message: "The request timed out. Try again." });
     return new ApiError(0, { code: "NETWORK_ERROR", message: "Can't reach the server. Check your connection and try again." });
   }
-  const { status, data } = err.response;
-  const body = data?.error;
-  if (body && typeof body === "object" && typeof body.message === "string") {
-    return new ApiError(status, { code: String(body.code || "ERROR"), message: body.message, fields: body.fields });
+  const { status } = err.response;
+  let data: unknown = err.response.data;
+  // Text/blob downloads (CSV export) receive the JSON error body as a string.
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      // not JSON
+    }
+  }
+  const body = isRecord(data) ? data.error : undefined;
+  if (isRecord(body) && typeof body.message === "string") {
+    return new ApiError(status, { code: String(body.code || "ERROR"), message: body.message, fields: body.fields as ApiErrorBody["fields"] });
   }
   // Legacy endpoints answer { success: false, error: "message" }.
   if (typeof body === "string") return new ApiError(status, { code: "ERROR", message: body });
@@ -56,7 +67,7 @@ function toApiError(err: AxiosError<any>): ApiError {
 
 let redirectingToLogin = false;
 
-http.interceptors.response.use(undefined, async (err: AxiosError<any>) => {
+http.interceptors.response.use(undefined, async (err: AxiosError) => {
   const apiError = toApiError(err);
   const config = err.config as RetriableConfig | undefined;
 

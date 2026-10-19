@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { activitiesDb, dealsDb, leadsDb, tasksDb, type DealRow } from "@ai-lead-gen/database";
+import { activitiesDb, dealsDb, leadsDb, tasksDb, type DealListFilters, type DealRow } from "@ai-lead-gen/database";
 import { createRouter } from "../http/router";
 import { HttpError } from "../http/errors";
-import { send } from "../http/pagination";
+import { parsePagination, send, sendPage } from "../http/pagination";
 import { parse, parseId, queryList } from "../http/validate";
 import { getCtx, requireRole } from "../middleware/auth";
 import { events } from "../events";
@@ -96,17 +96,69 @@ const listQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
 });
 
-// GET /api/deals?stage&ownerId=me|unassigned|<id>&leadId&q — the whole board (not paginated)
-dealsRouter.get("/", async (req, res) => {
-  const { orgId, userId } = getCtx(req);
-  const query = parse(listQuerySchema, req.query);
-  const deals = await dealsDb.list(orgId, {
+function listFilters(query: z.output<typeof listQuerySchema>, userId: string): DealListFilters {
+  return {
     stage: query.stage,
     ownerId: query.ownerId === "me" ? userId : query.ownerId === "unassigned" ? null : query.ownerId,
     leadId: query.leadId,
     q: query.q,
+  };
+}
+
+// GET /api/deals?stage&ownerId=me|unassigned|<id>&leadId&q — every matching deal (up to 2,000);
+// with page/pageSize, one page in board order as { data, meta }
+dealsRouter.get("/", async (req, res) => {
+  const { orgId, userId } = getCtx(req);
+  const filters = listFilters(parse(listQuerySchema, req.query), userId);
+  if (req.query.page === undefined && req.query.pageSize === undefined) return send(res, await dealsDb.list(orgId, filters));
+  const pagination = parsePagination(req.query, { sortable: {} });
+  const { rows, total } = await dealsDb.listPage(orgId, filters, pagination);
+  sendPage(res, rows, total, pagination);
+});
+
+const BOARD_PER_STAGE = 50;
+const MAX_STAGE_LIMIT = 1000;
+
+const boardQuerySchema = listQuerySchema.extend({
+  perStage: z.coerce.number().int().min(1).max(MAX_STAGE_LIMIT).default(BOARD_PER_STAGE),
+  /** Per-stage overrides of perStage for columns the user expanded: "Qualified:100,Closed Won:150". */
+  expand: z.string().max(500).optional(),
+});
+
+function parseExpand(expand: string | undefined): Map<string, number> {
+  const limits = new Map<string, number>();
+  for (const part of (expand ?? "").split(",")) {
+    const sep = part.lastIndexOf(":");
+    const stage = part.slice(0, sep).trim();
+    const limit = Number(part.slice(sep + 1));
+    if (sep > 0 && (DEAL_STAGES as readonly string[]).includes(stage) && Number.isInteger(limit) && limit > 0) {
+      limits.set(stage, Math.min(limit, MAX_STAGE_LIMIT));
+    }
+  }
+  return limits;
+}
+
+// GET /api/deals/board?perStage&expand&ownerId&q — the first deals of each stage plus every stage's
+// count / value / weighted value, so the board doesn't load the whole pipeline
+dealsRouter.get("/board", async (req, res) => {
+  const { orgId, userId } = getCtx(req);
+  const query = parse(boardQuerySchema, req.query);
+  const filters = listFilters({ ...query, stage: undefined }, userId);
+  const expand = parseExpand(query.expand);
+  const stages = (query.stage?.length ? DEAL_STAGES.filter((s) => query.stage!.includes(s)) : DEAL_STAGES) as string[];
+  const [totals, pages] = await Promise.all([
+    dealsDb.stageTotals(orgId, { ...filters, stage: stages }),
+    Promise.all(stages.map((stage) => dealsDb.listPage(orgId, { ...filters, stage: [stage] }, { from: 0, to: (expand.get(stage) ?? query.perStage) - 1 }))),
+  ]);
+  send(res, {
+    stages: stages.map((stage, i) => ({
+      stage,
+      deals: pages[i].rows,
+      count: pages[i].total,
+      value: totals[stage]?.value ?? 0,
+      weighted: totals[stage]?.weighted ?? 0,
+    })),
   });
-  send(res, deals);
 });
 
 // POST /api/deals — company/contact default from the linked lead
@@ -142,6 +194,65 @@ dealsRouter.post("/", async (req, res) => {
     await syncLeadWithDealStage(orgId, userId, deal);
   }
   send(res, (await dealsDb.get(orgId, deal.id)) ?? deal, 201);
+});
+
+const MAX_BULK_DEALS = 200;
+
+const bulkCreateSchema = z
+  .object({
+    leadIds: z.array(z.string().uuid()).min(1, "Select at least one lead").max(MAX_BULK_DEALS),
+    stage: dealFields.stage.default("New"),
+    ownerId: dealFields.ownerId.optional(),
+    value: dealFields.value.default(0),
+  })
+  .strict();
+
+// POST /api/deals/bulk — one deal per lead (title/company/contact from the lead); ids that are not
+// leads of this workspace come back in `missing`
+dealsRouter.post("/bulk", async (req, res) => {
+  const { orgId, userId } = getCtx(req);
+  const body = parse(bulkCreateSchema, req.body);
+  await assertMember(orgId, body.ownerId, "ownerId");
+  const ids = Array.from(new Set(body.leadIds));
+  const order = new Map(ids.map((id, i) => [id, i]));
+  const leads = (await leadsDb.getMany(orgId, ids)).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+  const found = new Set(leads.map((l) => l.id));
+  const missing = ids.filter((id) => !found.has(id));
+
+  const top = await dealsDb.minPosition(orgId, body.stage);
+  const closedAt = isClosedStage(body.stage) ? new Date().toISOString() : null;
+  const rows = leads.map((lead, i) => {
+    const name = lead.company || lead.name;
+    return {
+      title: name ? `${name} opportunity` : "New opportunity",
+      company: lead.company ?? "",
+      contact: lead.name ?? null,
+      value: body.value,
+      stage: body.stage,
+      probability: STAGE_PROBABILITY[body.stage],
+      owner_id: body.ownerId === undefined ? (lead.owner_id ?? userId) : body.ownerId,
+      lead_id: lead.id,
+      // Keeps the selection order, first lead at the top of the column.
+      position: top - (leads.length - i),
+      created_by: userId,
+      closed_at: closedAt,
+    };
+  });
+
+  const deals = await dealsDb.createMany(orgId, rows);
+  for (const deal of deals) {
+    events.emit("deal.created", { orgId, actorId: userId, dealId: deal.id, leadId: deal.lead_id });
+    await activitiesDb.create(orgId, {
+      type: "system",
+      leadId: deal.lead_id,
+      dealId: deal.id,
+      title: `Deal created: ${deal.title}`,
+      metadata: { stage: deal.stage, value: deal.value },
+      actorId: userId,
+    });
+    await syncLeadWithDealStage(orgId, userId, deal);
+  }
+  send(res, { created: deals.length, missing, deals }, 201);
 });
 
 // GET /api/deals/:id

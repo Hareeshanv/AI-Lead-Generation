@@ -10,9 +10,10 @@
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
-    --primary: 160 84% 39%;
+    /* emerald-700: white text on it is ~5.5:1 (WCAG AA); the old emerald-500 was ~2.5:1. */
+    --primary: 163 94% 24%;
     --primary-foreground: 210 20% 98%;
-    --secondary: 190 95% 39%;
+    --secondary: 192 82% 31%;
     --secondary-foreground: 210 20% 98%;
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
@@ -33,10 +34,11 @@
     --card-foreground: 210 20% 98%;
     --popover: 240 10% 6%;
     --popover-foreground: 210 20% 98%;
+    /* The bright dark-mode emerald needs dark text for contrast. */
     --primary: 160 84% 45%;
-    --primary-foreground: 210 20% 98%;
+    --primary-foreground: 240 10% 4%;
     --secondary: 190 95% 42%;
-    --secondary-foreground: 210 20% 98%;
+    --secondary-foreground: 240 10% 4%;
     --muted: 240 10% 12%;
     --muted-foreground: 217.9 10.6% 64.9%;
     --accent: 160 84% 45%;

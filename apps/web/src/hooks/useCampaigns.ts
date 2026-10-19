@@ -13,11 +13,12 @@ import { useApiMutation } from "./useApiMutation";
 
 const RUNNING_REFETCH_MS = 15_000;
 
-export function useCampaigns(params: CampaignListParams = {}) {
+export function useCampaigns(params: CampaignListParams = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.campaigns.list(params),
     queryFn: () => campaignApi.list(params),
     placeholderData: keepPreviousData,
+    enabled: options.enabled ?? true,
   });
 }
 

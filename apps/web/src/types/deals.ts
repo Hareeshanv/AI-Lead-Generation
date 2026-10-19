@@ -56,6 +56,44 @@ export interface DealListParams {
   q?: string;
 }
 
+/** GET /api/deals/board: the first deals of each stage plus server-side totals for the whole stage. */
+export interface DealBoardParams {
+  /** "me", "unassigned" or a user id. */
+  ownerId?: string;
+  q?: string;
+  perStage?: number;
+  /** Larger limits for expanded columns. */
+  expand?: Partial<Record<DealStage, number>>;
+}
+
+export interface DealBoardColumn {
+  stage: DealStage;
+  /** Ordered by position; at most the stage's limit. */
+  deals: Deal[];
+  count: number;
+  value: number;
+  /** Probability-weighted value. */
+  weighted: number;
+}
+
+export interface DealBoard {
+  stages: DealBoardColumn[];
+}
+
+export interface BulkCreateDealsInput {
+  leadIds: string[];
+  stage?: DealStage;
+  ownerId?: string | null;
+  value?: number;
+}
+
+export interface BulkCreateDealsResult {
+  created: number;
+  /** Lead ids that were not found in this workspace. */
+  missing: string[];
+  deals: Deal[];
+}
+
 export type ActivityType =
   | "note"
   | "call"

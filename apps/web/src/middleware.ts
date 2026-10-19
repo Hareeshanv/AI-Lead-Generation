@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/reset-password", "/auth"];
+/** Link landing pages are public because their session arrives in the URL hash, which the server never sees. */
+const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/reset-password", "/invitations/accept", "/auth"];
 /** Signed-in users are sent to the dashboard from these. */
 const GUEST_ONLY_PATHS = ["/login", "/register", "/forgot-password"];
 

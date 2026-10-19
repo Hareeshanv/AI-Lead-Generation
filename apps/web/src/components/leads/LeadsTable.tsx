@@ -43,7 +43,128 @@ export interface LeadsTableProps {
   onDelete?: (lead: Lead) => void;
 }
 
-export const LeadsTable: React.FC<LeadsTableProps> = ({ leads, selected, onToggle, onToggleAll, sort, onSort, ownerName, onEdit, onDelete }) => {
+interface LeadRowProps {
+  lead: Lead;
+  isSelected: boolean;
+  ownerLabel: string;
+  onToggle: (id: string) => void;
+  onEdit: (lead: Lead) => void;
+  onDelete?: (lead: Lead) => void;
+}
+
+/** Memoized so toggling one checkbox re-renders only that row (callbacks must be stable). */
+const LeadRow = React.memo<LeadRowProps>(function LeadRow({ lead, isSelected, ownerLabel, onToggle, onEdit, onDelete }) {
+  const consentTime = formatConsentTime(lead.consentAt);
+  return (
+    <tr className={cn("hover:bg-muted/40 transition-colors", isSelected && "bg-primary/5")}>
+      <td className="py-3 pl-4">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggle(lead.id)}
+          aria-label={`Select ${lead.name}`}
+          className="h-4 w-4 rounded border-border accent-primary"
+        />
+      </td>
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-3">
+          <Avatar src={lead.avatar} name={lead.name} />
+          <div className="min-w-0">
+            <Link href={`/leads/${lead.id}`} className="font-medium text-foreground hover:text-primary transition-colors">
+              {lead.name}
+            </Link>
+            {lead.title && <p className="text-xs text-muted-foreground">{lead.title}</p>}
+            {(lead.isGuardian != null || lead.needsGuardianConsent || lead.courseInterest || lead.examYear || lead.doNotContact) && (
+              <div className="flex flex-wrap items-center gap-1 mt-1">
+                <AudienceBadge isGuardian={lead.isGuardian} />
+                <GuardianConsentBadge lead={lead} />
+                {lead.doNotContact && (
+                  <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 text-[10px] font-medium text-rose-600 dark:text-rose-300">
+                    Do not contact
+                  </span>
+                )}
+                {(lead.courseInterest || lead.examYear) && (
+                  <span className="text-[11px] text-muted-foreground">{[lead.courseInterest, lead.examYear].filter(Boolean).join(" · ")}</span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </td>
+      <td className="py-3 px-4">
+        <div className="text-foreground">{lead.company || "—"}</div>
+        {lead.industry && <div className="text-xs text-muted-foreground">{lead.industry}</div>}
+      </td>
+      <td className="py-3 px-4">
+        <span className={cn("inline-flex px-2 py-0.5 rounded-full font-mono font-semibold text-xs border", scoreBadgeClass(lead.score))}>
+          {lead.score}/100
+        </span>
+      </td>
+      <td className="py-3 px-4">
+        <StatusBadge status={lead.status} />
+      </td>
+      <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">{ownerLabel}</td>
+      <td className="py-3 px-4 text-xs text-muted-foreground">
+        {lead.sourcePlatform ? (
+          <div className="space-y-1">
+            <SourcePlatformBadge platform={lead.sourcePlatform} />
+            {lead.campaignName && (
+              <div className="truncate max-w-[160px]" title={lead.campaignName}>
+                {lead.campaignName}
+              </div>
+            )}
+            {consentTime && (
+              <div className="flex items-center gap-1 text-[11px]" title="Consent recorded at form submission">
+                <ShieldCheck className="w-3 h-3" /> {consentTime}
+              </div>
+            )}
+          </div>
+        ) : (
+          lead.source
+        )}
+      </td>
+      <td className="py-3 px-4 text-xs">
+        <div className={hasContact(lead.email) ? "text-foreground" : "text-muted-foreground"}>{hasContact(lead.email) ? lead.email : "—"}</div>
+        <div className="mt-0.5 text-muted-foreground">{hasContact(lead.phone) ? lead.phone : "—"}</div>
+      </td>
+      <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
+        {new Date(lead.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+      </td>
+      <td className="py-3 px-4 text-right">
+        <div className="flex items-center justify-end gap-1">
+          <Link href={`/leads/${lead.id}`} aria-label="View lead details" className={iconLink}>
+            <Eye className="w-4 h-4" />
+          </Link>
+          <button type="button" onClick={() => onEdit(lead)} aria-label={`Edit ${lead.name}`} className={iconLink}>
+            <Pencil className="w-4 h-4" />
+          </button>
+          {lead.profileUrl && (
+            <a href={lead.profileUrl} target="_blank" rel="noopener noreferrer" aria-label="Open profile" className={iconLink}>
+              <ExternalLink className="w-4 h-4" />
+            </a>
+          )}
+          {onDelete && (
+            <button type="button" onClick={() => onDelete(lead)} aria-label={`Delete ${lead.name}`} className={cn(iconLink, "hover:text-rose-500")}>
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+export const LeadsTable = React.memo<LeadsTableProps>(function LeadsTable({
+  leads,
+  selected,
+  onToggle,
+  onToggleAll,
+  sort,
+  onSort,
+  ownerName,
+  onEdit,
+  onDelete,
+}) {
   const allSelected = leads.length > 0 && leads.every((l) => selected.has(l.id));
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
@@ -83,105 +204,19 @@ export const LeadsTable: React.FC<LeadsTableProps> = ({ leads, selected, onToggl
           </thead>
           <tbody className="divide-y divide-border/60">
             {leads.map((lead) => (
-              <tr key={lead.id} className={cn("hover:bg-muted/40 transition-colors", selected.has(lead.id) && "bg-primary/5")}>
-                <td className="py-3 pl-4">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(lead.id)}
-                    onChange={() => onToggle(lead.id)}
-                    aria-label={`Select ${lead.name}`}
-                    className="h-4 w-4 rounded border-border accent-primary"
-                  />
-                </td>
-                <td className="py-3 px-4">
-                  <div className="flex items-center gap-3">
-                    <Avatar src={lead.avatar} name={lead.name} />
-                    <div className="min-w-0">
-                      <Link href={`/leads/${lead.id}`} className="font-medium text-foreground hover:text-primary transition-colors">
-                        {lead.name}
-                      </Link>
-                      {lead.title && <p className="text-xs text-muted-foreground">{lead.title}</p>}
-                      {(lead.isGuardian != null || lead.needsGuardianConsent || lead.courseInterest || lead.examYear || lead.doNotContact) && (
-                        <div className="flex flex-wrap items-center gap-1 mt-1">
-                          <AudienceBadge isGuardian={lead.isGuardian} />
-                          <GuardianConsentBadge lead={lead} />
-                          {lead.doNotContact && (
-                            <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 text-[10px] font-medium text-rose-600 dark:text-rose-300">
-                              Do not contact
-                            </span>
-                          )}
-                          {(lead.courseInterest || lead.examYear) && (
-                            <span className="text-[11px] text-muted-foreground">{[lead.courseInterest, lead.examYear].filter(Boolean).join(" · ")}</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </td>
-                <td className="py-3 px-4">
-                  <div className="text-foreground">{lead.company || "—"}</div>
-                  {lead.industry && <div className="text-xs text-muted-foreground">{lead.industry}</div>}
-                </td>
-                <td className="py-3 px-4">
-                  <span className={cn("inline-flex px-2 py-0.5 rounded-full font-mono font-semibold text-xs border", scoreBadgeClass(lead.score))}>
-                    {lead.score}/100
-                  </span>
-                </td>
-                <td className="py-3 px-4">
-                  <StatusBadge status={lead.status} />
-                </td>
-                <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">{ownerName(lead.ownerId)}</td>
-                <td className="py-3 px-4 text-xs text-muted-foreground">
-                  {lead.sourcePlatform ? (
-                    <div className="space-y-1">
-                      <SourcePlatformBadge platform={lead.sourcePlatform} />
-                      {lead.campaignName && (
-                        <div className="truncate max-w-[160px]" title={lead.campaignName}>
-                          {lead.campaignName}
-                        </div>
-                      )}
-                      {formatConsentTime(lead.consentAt) && (
-                        <div className="flex items-center gap-1 text-[11px]" title="Consent recorded at form submission">
-                          <ShieldCheck className="w-3 h-3" /> {formatConsentTime(lead.consentAt)}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    lead.source
-                  )}
-                </td>
-                <td className="py-3 px-4 text-xs">
-                  <div className={hasContact(lead.email) ? "text-foreground" : "text-muted-foreground"}>{hasContact(lead.email) ? lead.email : "—"}</div>
-                  <div className="mt-0.5 text-muted-foreground">{hasContact(lead.phone) ? lead.phone : "—"}</div>
-                </td>
-                <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-                  {new Date(lead.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
-                </td>
-                <td className="py-3 px-4 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Link href={`/leads/${lead.id}`} aria-label="View lead details" className={iconLink}>
-                      <Eye className="w-4 h-4" />
-                    </Link>
-                    <button type="button" onClick={() => onEdit(lead)} aria-label={`Edit ${lead.name}`} className={iconLink}>
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    {lead.profileUrl && (
-                      <a href={lead.profileUrl} target="_blank" rel="noopener noreferrer" aria-label="Open profile" className={iconLink}>
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    )}
-                    {onDelete && (
-                      <button type="button" onClick={() => onDelete(lead)} aria-label={`Delete ${lead.name}`} className={cn(iconLink, "hover:text-rose-500")}>
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
+              <LeadRow
+                key={lead.id}
+                lead={lead}
+                isSelected={selected.has(lead.id)}
+                ownerLabel={ownerName(lead.ownerId)}
+                onToggle={onToggle}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
             ))}
           </tbody>
         </table>
       </div>
     </div>
   );
-};
+});

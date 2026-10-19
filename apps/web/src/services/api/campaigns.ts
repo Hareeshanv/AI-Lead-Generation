@@ -15,7 +15,6 @@ import type {
   CampaignStepInput,
   LaunchCampaignResult,
   PageParams,
-  Paginated,
   RecipientStatus,
 } from "@/types";
 

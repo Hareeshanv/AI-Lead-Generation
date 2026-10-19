@@ -45,12 +45,6 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);

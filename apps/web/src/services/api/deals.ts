@@ -1,21 +1,27 @@
-import { deleteData, enc, getData, patchData, postData } from "./http";
+import { deleteData, enc, getData, getPage, patchData, postData } from "./http";
 import { mapActivityRow, mapTaskRow, toQueryParams } from "./leads";
 import type {
   Activity,
   ActivityInput,
+  BulkCreateDealsInput,
+  BulkCreateDealsResult,
   Deal,
+  DealBoard,
+  DealBoardParams,
   DealInput,
   DealListParams,
   DealStage,
+  PageParams,
+  Paginated,
   Task,
   TaskInput,
   TaskListParams,
   TaskPatch,
 } from "@/types";
 
-const one = (v: any) => (Array.isArray(v) ? v[0] ?? null : v ?? null);
+import { one, type ActivityRow, type DealBoardColumnRow, type DealRow, type TaskRow } from "./rows";
 
-export const mapDealRow = (d: any): Deal => {
+export const mapDealRow = (d: DealRow): Deal => {
   const lead = one(d.lead);
   return {
     id: d.id,
@@ -52,38 +58,66 @@ export const mapDealRow = (d: any): Deal => {
 /** Owned by the CRM module. */
 export const dealApi = {
   list: async (params: DealListParams = {}): Promise<Deal[]> => {
-    const rows = await getData<any[]>("/deals", { params: toQueryParams(params) });
+    const rows = await getData<DealRow[]>("/deals", { params: toQueryParams(params) });
     return Array.isArray(rows) ? rows.map(mapDealRow) : [];
   },
 
-  get: async (id: string): Promise<Deal> => mapDealRow(await getData<any>(`/deals/${enc(id)}`)),
+  board: async ({ expand, ...params }: DealBoardParams = {}): Promise<DealBoard> => {
+    const expandParam = Object.entries(expand ?? {})
+      .map(([stage, limit]) => `${stage}:${limit}`)
+      .join(",");
+    const data = await getData<{ stages?: DealBoardColumnRow[] }>("/deals/board", {
+      params: toQueryParams({ ...params, expand: expandParam || undefined }),
+    });
+    return {
+      stages: (data.stages ?? []).map((s) => ({
+        stage: s.stage,
+        deals: Array.isArray(s.deals) ? s.deals.map(mapDealRow) : [],
+        count: Number(s.count) || 0,
+        value: Number(s.value) || 0,
+        weighted: Number(s.weighted) || 0,
+      })),
+    };
+  },
 
-  create: async (input: DealInput): Promise<Deal> => mapDealRow(await postData<any>("/deals", input)),
+  bulkCreate: async (input: BulkCreateDealsInput): Promise<BulkCreateDealsResult> => {
+    const data = await postData<{ created: number; missing?: string[]; deals?: DealRow[] }>("/deals/bulk", input);
+    return { created: Number(data.created) || 0, missing: data.missing ?? [], deals: (data.deals ?? []).map(mapDealRow) };
+  },
 
-  update: async (id: string, patch: DealInput): Promise<Deal> => mapDealRow(await patchData<any>(`/deals/${enc(id)}`, patch)),
+  get: async (id: string): Promise<Deal> => mapDealRow(await getData<DealRow>(`/deals/${enc(id)}`)),
+
+  create: async (input: DealInput): Promise<Deal> => mapDealRow(await postData<DealRow>("/deals", input)),
+
+  update: async (id: string, patch: DealInput): Promise<Deal> => mapDealRow(await patchData<DealRow>(`/deals/${enc(id)}`, patch)),
 
   updateStage: async (id: string, stage: DealStage, options: { position?: number; lostReason?: string | null } = {}): Promise<Deal> =>
-    mapDealRow(await patchData<any>(`/deals/${enc(id)}/stage`, { stage, ...options })),
+    mapDealRow(await patchData<DealRow>(`/deals/${enc(id)}/stage`, { stage, ...options })),
 
   remove: (id: string) => deleteData(`/deals/${enc(id)}`),
 
   activities: async (id: string): Promise<Activity[]> =>
-    (await getData<any[]>(`/deals/${enc(id)}/activities`)).map(mapActivityRow),
+    (await getData<ActivityRow[]>(`/deals/${enc(id)}/activities`)).map(mapActivityRow),
 
   addActivity: async (id: string, input: ActivityInput): Promise<Activity> =>
-    mapActivityRow(await postData<any>(`/deals/${enc(id)}/activities`, input)),
+    mapActivityRow(await postData<ActivityRow>(`/deals/${enc(id)}/activities`, input)),
 
-  tasks: async (id: string): Promise<Task[]> => (await getData<any[]>(`/deals/${enc(id)}/tasks`)).map(mapTaskRow),
+  tasks: async (id: string): Promise<Task[]> => (await getData<TaskRow[]>(`/deals/${enc(id)}/tasks`)).map(mapTaskRow),
 
-  addTask: async (id: string, input: TaskInput): Promise<Task> => mapTaskRow(await postData<any>(`/deals/${enc(id)}/tasks`, input)),
+  addTask: async (id: string, input: TaskInput): Promise<Task> => mapTaskRow(await postData<TaskRow>(`/deals/${enc(id)}/tasks`, input)),
 };
 
 /** Follow-up tasks across leads and deals. */
 export const taskApi = {
   list: async (params: TaskListParams = {}): Promise<Task[]> =>
-    (await getData<any[]>("/tasks", { params: toQueryParams(params) })).map(mapTaskRow),
+    (await getData<TaskRow[]>("/tasks", { params: toQueryParams(params) })).map(mapTaskRow),
 
-  update: async (id: string, patch: TaskPatch): Promise<Task> => mapTaskRow(await patchData<any>(`/tasks/${enc(id)}`, patch)),
+  listPage: async (params: TaskListParams & PageParams = {}): Promise<Paginated<Task>> => {
+    const page = await getPage<TaskRow>("/tasks", { ...params });
+    return { data: (page.data ?? []).map(mapTaskRow), meta: page.meta };
+  },
+
+  update: async (id: string, patch: TaskPatch): Promise<Task> => mapTaskRow(await patchData<TaskRow>(`/tasks/${enc(id)}`, patch)),
 
   remove: (id: string) => deleteData(`/tasks/${enc(id)}`),
 };

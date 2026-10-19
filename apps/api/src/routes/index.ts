@@ -4,6 +4,7 @@ import { meRouter } from "./me";
 import { settingsRouter } from "./settings";
 import { membersRouter, invitationsRouter } from "./members";
 import { leadsRouter } from "./leads";
+import { exportsRouter } from "./exports";
 import { signalsRouter } from "./signals";
 import { dealsRouter } from "./deals";
 import { tasksRouter, activitiesRouter } from "./tasks";
@@ -41,6 +42,7 @@ export const routeModules: RouteModule[] = [
   { path: "/api/members", router: membersRouter },
 
   { path: "/api/leads", router: leadsRouter },
+  { path: "/api/exports", router: exportsRouter },
   { path: "/api/signals", router: signalsRouter },
   { path: "/api/deals", router: dealsRouter },
   { path: "/api/tasks", router: tasksRouter },

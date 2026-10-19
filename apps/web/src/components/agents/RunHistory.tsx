@@ -7,7 +7,8 @@ import { QueryState } from "@/components/ui/QueryState";
 import { useAgentRuns } from "@/hooks/useAgents";
 import { cn } from "@/lib/utils";
 import type { AgentRun } from "@/types";
-import { RunStatusBadge, SOURCE_LABELS, formatDateTime, formatDuration } from "./shared";
+import { RunStatusBadge, SOURCE_LABELS, formatDuration } from "./shared";
+import { formatDateTime } from "@/lib/utils";
 
 const PAGE_SIZE = 10;
 

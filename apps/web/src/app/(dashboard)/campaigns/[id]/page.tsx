@@ -21,7 +21,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClassName } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { LoadingState, QueryState } from "@/components/ui/QueryState";
@@ -33,7 +33,6 @@ import {
   RECIPIENT_STATUS_LABELS,
   RecipientStatusBadge,
   describeSendWindow,
-  formatDateTime,
   formatDelay,
   formatPercent,
 } from "@/components/campaigns/shared";
@@ -49,7 +48,7 @@ import {
   useRemoveRecipient,
   useResumeCampaign,
 } from "@/hooks";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import type { CampaignDetail, CampaignRecipient, RecipientStatus } from "@/types";
 
 const RECIPIENT_PAGE_SIZE = 25;
@@ -243,10 +242,8 @@ function CampaignView({ campaign }: { campaign: CampaignDetail }) {
   const actions = canManage && (
     <>
       {campaign.status !== "completed" && (
-        <Link href={`/campaigns/${campaign.id}/edit`}>
-          <Button variant="outline" size="sm">
-            <Pencil className="h-4 w-4" /> Edit
-          </Button>
+        <Link href={`/campaigns/${campaign.id}/edit`} className={buttonClassName({ variant: "outline", size: "sm" })}>
+          <Pencil className="h-4 w-4" /> Edit
         </Link>
       )}
       {campaign.status === "draft" && (

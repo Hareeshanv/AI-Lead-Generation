@@ -2,7 +2,7 @@ import { z } from "zod";
 import { activitiesDb, dealsDb, tasksDb, type ActivityType } from "@ai-lead-gen/database";
 import { createRouter } from "../http/router";
 import { HttpError } from "../http/errors";
-import { send } from "../http/pagination";
+import { parsePagination, send, sendPage } from "../http/pagination";
 import { parse, parseId } from "../http/validate";
 import { getCtx, hasRole } from "../middleware/auth";
 import { events } from "../events";
@@ -105,18 +105,23 @@ function dueBefore(due: "overdue" | "today" | "week" | undefined): string | unde
   return end.toISOString();
 }
 
-// GET /api/tasks?assignee=me|all|<userId>&status=open|done|cancelled&due=overdue|today|week
+// GET /api/tasks?assignee=me|all|<userId>&status=open|done|cancelled&due=overdue|today|week — up to `limit`;
+// with page/pageSize, one page as { data, meta }
 tasksRouter.get("/", async (req, res) => {
   const { orgId, userId } = getCtx(req);
   const query = parse(listQuerySchema, req.query);
-  const tasks = await tasksDb.list(orgId, {
+  const filter = {
     assigneeId: query.assignee === "me" ? userId : query.assignee === "all" ? undefined : query.assignee,
     status: query.status,
     dueBefore: dueBefore(query.due),
-    limit: query.limit,
     withContext: true,
-  });
-  send(res, tasks);
+  };
+  if (req.query.page === undefined && req.query.pageSize === undefined) {
+    return send(res, await tasksDb.list(orgId, { ...filter, limit: query.limit }));
+  }
+  const pagination = parsePagination(req.query, { sortable: {} });
+  const { rows, total } = await tasksDb.listPage(orgId, filter, pagination);
+  sendPage(res, rows, total, pagination);
 });
 
 const updateTaskSchema = z

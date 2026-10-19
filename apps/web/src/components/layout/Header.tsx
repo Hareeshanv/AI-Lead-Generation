@@ -4,7 +4,7 @@ import React, { Suspense, useRef, useEffect, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { Search, Bell, Sun, Moon, X } from "lucide-react";
+import { Search, Bell, Sun, Moon, X, Menu } from "lucide-react";
 import { useThemeStore } from "@/stores/useThemeStore";
 import { useUnreadNotificationCount } from "@/hooks/useNotifications";
 import Link from "next/link";
@@ -74,17 +74,28 @@ const HeaderSearch: React.FC = () => {
   );
 };
 
-export const Header: React.FC = () => {
+export const Header: React.FC<{ onOpenNav: () => void; navOpen: boolean }> = ({ onOpenNav, navOpen }) => {
   const { theme, toggleTheme } = useThemeStore();
   const unreadCount = useUnreadNotificationCount().data ?? 0;
 
   return (
-    <header className="h-16 px-6 glass-panel border-b border-border flex items-center justify-between sticky top-0 z-20">
+    <header className="h-16 px-4 md:px-6 gap-2 glass-panel border-b border-border flex items-center justify-between sticky top-0 z-20">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="md:hidden shrink-0"
+        onClick={onOpenNav}
+        aria-label="Open navigation"
+        aria-controls="app-sidebar"
+        aria-expanded={navOpen}
+      >
+        <Menu className="w-5 h-5" />
+      </Button>
       <Suspense fallback={<div className="w-full max-w-md" />}>
         <HeaderSearch />
       </Suspense>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <Link
           href="/notifications"
           aria-label={unreadCount > 0 ? `Notifications (${unreadCount} unread)` : "Notifications"}

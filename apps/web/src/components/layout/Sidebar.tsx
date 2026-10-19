@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -18,8 +18,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
+  X,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { useMe } from "@/hooks/useMe";
 import { signOut } from "@/lib/auth";
 import { useLeadCount } from "@/hooks/useLeads";
@@ -62,18 +64,30 @@ const navigationSections: NavSection[] = [
   },
 ];
 
-export const Sidebar: React.FC = () => {
-  const [collapsed, setCollapsed] = useState(false);
+export interface SidebarProps {
+  /** Below the md breakpoint the sidebar is an off-canvas drawer, shown while this is true. */
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = ({ mobileOpen, onMobileClose }) => {
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const pathname = usePathname();
   const { data: me } = useMe();
   const user = me?.user;
   const displayName = user?.fullName || user?.email || "User";
   const leadCount = useLeadCount().data ?? 0;
+  const asideRef = useRef<HTMLElement>(null);
+  // The mobile drawer always shows labels.
+  const collapsed = desktopCollapsed && !mobileOpen;
+
+  useFocusTrap(asideRef, mobileOpen, onMobileClose);
 
   useEffect(() => {
     setPendingHref(null);
-  }, [pathname]);
+    onMobileClose();
+  }, [pathname, onMobileClose]);
 
   const handleLogout = () => {
     void signOut();
@@ -81,9 +95,16 @@ export const Sidebar: React.FC = () => {
 
   return (
     <aside
+      ref={asideRef}
+      id="app-sidebar"
+      tabIndex={-1}
+      aria-label="Main navigation"
       className={cn(
-        "relative flex flex-col h-screen glass-panel border-r border-border transition-all duration-300 z-30 select-none",
-        collapsed ? "w-20" : "w-64"
+        "fixed inset-y-0 left-0 z-50 flex w-64 flex-col h-dvh glass-panel border-r border-border transition-all duration-300 select-none focus:outline-none",
+        "md:relative md:z-30 md:translate-x-0",
+        // invisible keeps the off-screen drawer's links out of the tab order on mobile.
+        mobileOpen ? "translate-x-0" : "-translate-x-full invisible md:visible",
+        collapsed && "md:w-20"
       )}
     >
       <div className="flex items-center justify-between h-16 px-4 border-b border-border">
@@ -94,11 +115,18 @@ export const Sidebar: React.FC = () => {
           {!collapsed && <span className="font-semibold text-base tracking-tight text-foreground">AI LeadGen</span>}
         </Link>
         <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          onClick={() => setDesktopCollapsed(!desktopCollapsed)}
+          className="hidden md:inline-flex p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        </button>
+        <button
+          onClick={onMobileClose}
+          className="md:hidden p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          aria-label="Close navigation"
+        >
+          <X className="w-4 h-4" />
         </button>
       </div>
 

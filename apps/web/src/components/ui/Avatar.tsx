@@ -25,6 +25,7 @@ export const Avatar: React.FC<AvatarProps> = ({ src, name, size = "md", classNam
   };
 
   return src ? (
+    // eslint-disable-next-line @next/next/no-img-element -- avatar URLs come from arbitrary hosts not listed in next.config images.remotePatterns
     <img
       src={src}
       alt={name}

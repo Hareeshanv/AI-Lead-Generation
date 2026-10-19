@@ -12,6 +12,7 @@ import { authErrorMessage } from "@/lib/auth";
 import { notifyError, notifySuccess } from "@/lib/toast";
 import type { Me } from "@/types";
 import { Field, SectionTitle, fieldError } from "./shared";
+import { WorkspacesCard } from "./WorkspaceInvitations";
 
 export function ProfileSettings({ me }: { me: Me }) {
   const updateProfile = useUpdateProfile();
@@ -69,6 +70,8 @@ export function ProfileSettings({ me }: { me: Me }) {
           </div>
         </form>
       </Card>
+
+      <WorkspacesCard me={me} />
 
       <ChangePasswordCard />
     </div>

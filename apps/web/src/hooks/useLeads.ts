@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { leadApi, signalApi } from "@/services/api";
@@ -15,6 +15,7 @@ import type {
   LeadInput,
   LeadListParams,
   LeadSearchFilters,
+  LeadSearchParser,
   LeadSearchResult,
   SignalImportResult,
   Task,
@@ -61,7 +62,11 @@ export function useLeadsRealtime(orgId: string | undefined) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all }), REALTIME_REFRESH_DEBOUNCE_MS);
+      // AI search results are left alone: re-running them on every teammate/webhook change would hit the search rate limit.
+      timer = setTimeout(
+        () => void queryClient.invalidateQueries({ queryKey: queryKeys.leads.all, predicate: (q) => q.queryKey[1] !== "search" }),
+        REALTIME_REFRESH_DEBOUNCE_MS
+      );
     };
     const channel = supabase
       .channel(`leads:${orgId}`)
@@ -77,131 +82,146 @@ export function useLeadsRealtime(orgId: string | undefined) {
 
 export type SearchFilterKey = keyof LeadSearchFilters;
 
-const CITY_ALIASES: string[][] = [
-  ["bengaluru", "bangalore"],
-  ["mysuru", "mysore"],
-  ["mumbai", "bombay"],
-  ["chennai", "madras"],
-  ["gurugram", "gurgaon"],
-];
+const SEARCH_KEY_PREFIX = ["leads", "search"] as const;
 
-const cityVariants = (city: string): string[] => {
-  const c = city.trim().toLowerCase();
-  return CITY_ALIASES.find((group) => group.includes(c)) ?? [c];
-};
-
-const includesText = (field: string | null | undefined, needle: string) =>
-  Boolean(field && field.toLowerCase().includes(needle.toLowerCase()));
-
-/** Client-side mirror of the server's lead filters, used after a filter chip is removed. */
-const matchesSearchFilters = (lead: Lead, f: LeadSearchFilters): boolean => {
-  if (f.course_interest && !includesText(lead.courseInterest, f.course_interest) && !lead.tags.some((t) => includesText(t, f.course_interest!)))
-    return false;
-  if (f.city && !cityVariants(f.city).some((c) => includesText(lead.location, c))) return false;
-  if (f.exam_year && lead.examYear !== f.exam_year) return false;
-  if (f.source_platform && lead.sourcePlatform !== f.source_platform) return false;
-  if (f.status && lead.status.toLowerCase() !== f.status.toLowerCase()) return false;
-  if (f.min_score != null && lead.score < f.min_score) return false;
-  if (f.keywords.length > 0) {
-    const fields = [lead.name, lead.title, lead.company, lead.industry, lead.location, lead.courseInterest, lead.campaignName, ...lead.tags];
-    if (!f.keywords.every((k) => fields.some((field) => includesText(field, k)))) return false;
-  }
-  return true;
-};
+interface ActiveSearch {
+  query: string;
+  filters: LeadSearchFilters;
+  parsedBy: LeadSearchParser;
+}
 
 /**
- * Natural-language lead search (POST /leads/search) plus its intent signals. Removing a filter chip
- * re-runs the search's lead list through the remaining filters and reloads matching signals.
+ * Natural-language lead search (POST /leads/search) plus its intent signals. The query is parsed once;
+ * the result is cached under its structured filters, so removing a filter chip re-queries the server with
+ * the remaining filters and lead mutations (which invalidate `leads`) refresh the results.
  */
 export function useLeadAiSearch() {
   const queryClient = useQueryClient();
-  const [searchResult, setSearchResult] = useState<LeadSearchResult | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
-  const latest = useRef<LeadSearchResult | null>(null);
-  latest.current = searchResult;
+  const [active, setActive] = useState<ActiveSearch | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const runId = useRef(0);
 
-  const runSearch = useCallback(async (query: string) => {
-    if (!query.trim()) {
-      toast.error("Enter a search query before running AI Search.");
-      return;
-    }
-    setIsSearching(true);
-    try {
-      const result = await leadApi.search(query.trim());
-      setSearchResult(result);
-      const leadCount = result.leads.length;
-      const signalCount = result.signals.length;
-      toast.success(
-        `Found ${leadCount} lead${leadCount === 1 ? "" : "s"} and ${signalCount} intent signal${signalCount === 1 ? "" : "s"}.`
-      );
-    } catch (err) {
-      toast.error(`AI Search failed: ${errorMessage(err)}`);
-    } finally {
-      setIsSearching(false);
-    }
+  const resultQuery = useQuery({
+    queryKey: queryKeys.leads.search(active?.filters ?? {}),
+    queryFn: () => leadApi.searchByFilters(active!.query, active!.filters),
+    enabled: active !== null,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+
+  // Filters come from `active` so a removed chip disappears before the re-query returns.
+  const resultData = resultQuery.data;
+  const searchResult = useMemo<LeadSearchResult | null>(
+    () =>
+      active
+        ? {
+            query: active.query,
+            filters: active.filters,
+            parsedBy: active.parsedBy,
+            leads: resultData?.leads ?? [],
+            signals: resultData?.signals ?? [],
+          }
+        : null,
+    [active, resultData]
+  );
+
+  const runSearch = useCallback(
+    async (query: string) => {
+      const text = query.trim();
+      if (!text) {
+        toast.error("Enter a search query before running AI Search.");
+        return;
+      }
+      const id = ++runId.current;
+      setIsParsing(true);
+      try {
+        const result = await leadApi.search(text);
+        if (id !== runId.current) return;
+        queryClient.setQueryData(queryKeys.leads.search(result.filters), result);
+        setActive({ query: text, filters: result.filters, parsedBy: result.parsedBy });
+        toast.success(`Found ${plural(result.leads.length, "lead")} and ${plural(result.signals.length, "intent signal")}.`);
+      } catch (err) {
+        if (id === runId.current) toast.error(`AI Search failed: ${errorMessage(err)}`);
+      } finally {
+        if (id === runId.current) setIsParsing(false);
+      }
+    },
+    [queryClient]
+  );
+
+  const removeSearchFilter = useCallback((key: SearchFilterKey, keyword?: string) => {
+    setActive((prev) => {
+      if (!prev) return prev;
+      const filters: LeadSearchFilters = { ...prev.filters, keywords: [...prev.filters.keywords] };
+      if (key === "keywords") filters.keywords = keyword === undefined ? [] : filters.keywords.filter((k) => k !== keyword);
+      else if (key === "min_score") filters.min_score = null;
+      else filters[key] = null;
+      return { ...prev, filters };
+    });
   }, []);
 
-  const removeSearchFilter = useCallback(async (key: SearchFilterKey, keyword?: string) => {
-    const current = latest.current;
-    if (!current) return;
-    const filters: LeadSearchFilters = { ...current.filters, keywords: [...current.filters.keywords] };
-    if (key === "keywords") filters.keywords = keyword === undefined ? [] : filters.keywords.filter((k) => k !== keyword);
-    else if (key === "min_score") filters.min_score = null;
-    else filters[key] = null;
-
-    const leads = current.leads.filter((lead) => matchesSearchFilters(lead, filters));
-    const next = { ...current, filters, leads };
-    setSearchResult(next);
-
-    let signals: IntentSignal[];
-    try {
-      signals = await signalApi.list({ course: filters.course_interest, city: filters.city });
-    } catch {
-      signals = current.signals;
-    }
-    // Ignore the response if a newer search or removal replaced the result meanwhile.
-    setSearchResult((prev) => (prev && prev.filters === filters ? { ...prev, signals } : prev));
+  const clearSearch = useCallback(() => {
+    runId.current++;
+    setIsParsing(false);
+    setActive(null);
   }, []);
 
-  const clearSearch = useCallback(() => setSearchResult(null), []);
+  const patchSignals = useCallback(
+    (update: (signals: IntentSignal[]) => IntentSignal[]) =>
+      queryClient.setQueriesData<LeadSearchResult>({ queryKey: SEARCH_KEY_PREFIX }, (prev) =>
+        prev ? { ...prev, signals: update(prev.signals) } : prev
+      ),
+    [queryClient]
+  );
 
-  const updateSignalStatus = useCallback(async (id: string, status: IntentSignalStatus) => {
-    try {
-      const updated = await signalApi.updateStatus(id, status);
-      setSearchResult((prev) => (prev ? { ...prev, signals: prev.signals.map((s) => (s.id === id ? updated : s)) } : prev));
-    } catch (err) {
-      toast.error(`Could not update the signal: ${errorMessage(err)}`);
-    }
-  }, []);
+  const updateSignalStatus = useCallback(
+    async (id: string, status: IntentSignalStatus) => {
+      try {
+        const updated = await signalApi.updateStatus(id, status);
+        patchSignals((signals) => signals.map((s) => (s.id === id ? updated : s)));
+      } catch (err) {
+        toast.error(`Could not update the signal: ${errorMessage(err)}`);
+      }
+    },
+    [patchSignals]
+  );
 
-  const deleteSignal = useCallback(async (id: string) => {
-    try {
-      await signalApi.delete(id);
-      setSearchResult((prev) => (prev ? { ...prev, signals: prev.signals.filter((s) => s.id !== id) } : prev));
-    } catch (err) {
-      toast.error(`Could not delete the signal: ${errorMessage(err)}`);
-    }
-  }, []);
+  const deleteSignal = useCallback(
+    async (id: string) => {
+      try {
+        await signalApi.delete(id);
+        patchSignals((signals) => signals.filter((s) => s.id !== id));
+      } catch (err) {
+        toast.error(`Could not delete the signal: ${errorMessage(err)}`);
+      }
+    },
+    [patchSignals]
+  );
 
   const importSignals = useCallback(
     async (payload: unknown): Promise<SignalImportResult> => {
       const result = await signalApi.import(payload);
       void queryClient.invalidateQueries({ queryKey: queryKeys.agents.all });
-      const current = latest.current;
-      if (current) {
-        try {
-          const signals = await signalApi.list({ course: current.filters.course_interest, city: current.filters.city });
-          setSearchResult((prev) => (prev === current ? { ...current, signals } : prev));
-        } catch {
-          // Keep the existing signals; the import itself succeeded.
-        }
-      }
+      void queryClient.invalidateQueries({ queryKey: SEARCH_KEY_PREFIX });
       return result;
     },
     [queryClient]
   );
 
-  return { searchResult, isSearching, runSearch, removeSearchFilter, clearSearch, updateSignalStatus, deleteSignal, importSignals };
+  return {
+    searchResult,
+    isSearching: isParsing,
+    /** Re-querying after a filter change or a lead mutation. */
+    isRefreshing: active !== null && resultQuery.isFetching,
+    searchError: active !== null && resultQuery.isError && !resultQuery.data ? resultQuery.error : null,
+    retrySearch: () => void resultQuery.refetch(),
+    runSearch,
+    removeSearchFilter,
+    clearSearch,
+    updateSignalStatus,
+    deleteSignal,
+    importSignals,
+  };
 }
 
 export function useLead(id: string | undefined) {

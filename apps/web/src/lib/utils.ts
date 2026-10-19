@@ -28,9 +28,12 @@ export const sourcePlatformLabel = (platform?: LeadSourcePlatform | null): strin
   return "Other";
 };
 
-export const formatConsentTime = (iso?: string | null): string | null => {
-  if (!iso) return null;
+/** Medium date and short time in the browser locale; `fallback` for a missing or invalid date. */
+export function formatDateTime(iso?: string | null, fallback = "—"): string {
+  if (!iso) return fallback;
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
+  if (Number.isNaN(date.getTime())) return fallback;
   return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-};
+}
+
+export const formatConsentTime = (iso?: string | null): string | null => formatDateTime(iso, "") || null;

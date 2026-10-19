@@ -6,21 +6,12 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { LoadingState, ErrorState } from "@/components/ui/QueryState";
-import { useTestWorkflow, useWorkflowSubjects } from "@/hooks";
+import { useDebounced, useTestWorkflow, useWorkflowSubjects } from "@/hooks";
 import { errorMessage } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import type { Workflow, WorkflowRun } from "@/types";
 import { triggerMeta } from "./catalog";
 import { ConditionTraceView, RunStatusBadge, StepList } from "./RunDetails";
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(id);
-  }, [value, ms]);
-  return debounced;
-}
 
 export const TestWorkflowDialog: React.FC<{ workflow: Workflow | null; onClose: () => void }> = ({ workflow, onClose }) => {
   const subjects = workflow

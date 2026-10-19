@@ -13,7 +13,7 @@ export const CampaignPickerModal: React.FC<{
   onClose: () => void;
   onConfirm: (campaignId: string) => void;
 }> = ({ isOpen, count, isSubmitting, onClose, onConfirm }) => {
-  const campaigns = useCampaigns({ pageSize: 100 });
+  const campaigns = useCampaigns({ pageSize: 100 }, { enabled: isOpen });
   const openCampaigns = (campaigns.data?.data ?? []).filter((c) => c.status !== "completed");
   const [campaignId, setCampaignId] = useState("");
 

@@ -4,13 +4,14 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Megaphone, Plus, Search } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClassName } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { QueryState } from "@/components/ui/QueryState";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { CampaignStatusBadge, ChannelBadge, formatDateTime, formatPercent, useDebounced } from "@/components/campaigns/shared";
+import { CampaignStatusBadge, ChannelBadge, formatPercent } from "@/components/campaigns/shared";
+import { useDebounced } from "@/hooks/useDebounced";
 import { useCampaigns, useHasRole, usePauseCampaign, useResumeCampaign } from "@/hooks";
-import { cn } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import type { Campaign, CampaignStatus } from "@/types";
 
 const PAGE_SIZE = 12;
@@ -101,10 +102,8 @@ export default function CampaignsPage() {
         icon={Megaphone}
         actions={
           canManage && (
-            <Link href="/campaigns/new">
-              <Button size="sm">
-                <Plus className="h-4 w-4" /> New campaign
-              </Button>
+            <Link href="/campaigns/new" className={buttonClassName({ size: "sm" })}>
+              <Plus className="h-4 w-4" /> New campaign
             </Link>
           )
         }
@@ -160,10 +159,8 @@ export default function CampaignsPage() {
               : "Campaigns created by managers will appear here.",
           action:
             !filtered && canManage ? (
-              <Link href="/campaigns/new">
-                <Button size="sm" variant="outline">
-                  <Plus className="h-4 w-4" /> New campaign
-                </Button>
+              <Link href="/campaigns/new" className={buttonClassName({ size: "sm", variant: "outline" })}>
+                <Plus className="h-4 w-4" /> New campaign
               </Link>
             ) : undefined,
         }}

@@ -110,7 +110,11 @@ const StatusBadge: React.FC<{ integration: ProviderIntegration }> = ({ integrati
 // Provider credentials
 // ---------------------------------------------------------------------------------------------
 
-const ConfigureDialog: React.FC<{ integration: ProviderIntegration; onClose: () => void }> = ({ integration, onClose }) => {
+const ConfigureDialog: React.FC<{ integration: ProviderIntegration; metaWebhookUrl: string | null; onClose: () => void }> = ({
+  integration,
+  metaWebhookUrl,
+  onClose,
+}) => {
   const save = useSaveIntegration();
   const savedInVault = integration.source === "vault";
   const [values, setValues] = useState<Record<string, string>>(() =>
@@ -182,6 +186,16 @@ const ConfigureDialog: React.FC<{ integration: ProviderIntegration; onClose: () 
         {(PROVIDER_CALLBACKS[integration.provider] ?? []).map((cb) => (
           <CopyField key={cb.path} label={cb.label} value={`${API_BASE_URL.replace(/\/+$/, "")}${cb.path}`} />
         ))}
+
+        {integration.provider === "meta" && metaWebhookUrl && (
+          <div className="space-y-1">
+            <CopyField label="Leadgen webhook callback URL" value={metaWebhookUrl} />
+            <p className="text-[11px] text-muted-foreground">
+              In your Meta app, subscribe the Page &quot;leadgen&quot; webhook to this URL and use the verify token above. It only accepts
+              requests signed with this workspace&apos;s app secret.
+            </p>
+          </div>
+        )}
 
         {save.data && !save.data.check.ok && (
           <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-start gap-2">
@@ -279,7 +293,7 @@ const ProviderCard: React.FC<{
   );
 };
 
-const ProvidersSection: React.FC<{ providers: ProviderIntegration[] }> = ({ providers }) => {
+const ProvidersSection: React.FC<{ providers: ProviderIntegration[]; metaWebhookUrl: string | null }> = ({ providers, metaWebhookUrl }) => {
   const isAdmin = useHasRole("admin");
   const canTest = useHasRole("manager");
   const [editing, setEditing] = useState<IntegrationProvider | null>(null);
@@ -308,7 +322,9 @@ const ProvidersSection: React.FC<{ providers: ProviderIntegration[] }> = ({ prov
           />
         ))}
       </div>
-      {editingIntegration && <ConfigureDialog integration={editingIntegration} onClose={() => setEditing(null)} />}
+      {editingIntegration && (
+        <ConfigureDialog integration={editingIntegration} metaWebhookUrl={metaWebhookUrl} onClose={() => setEditing(null)} />
+      )}
     </div>
   );
 };
@@ -636,7 +652,7 @@ export default function IntegrationsPage() {
         <ErrorState title="Couldn't load integrations" error={query.error} onRetry={() => void query.refetch()} />
       ) : (
         <>
-          <ProvidersSection providers={query.data.providers} />
+          <ProvidersSection providers={query.data.providers} metaWebhookUrl={query.data.metaWebhookUrl} />
           <AdLeadSourcesSection sources={query.data.sources} metaConfigured={query.data.metaConfigured} />
         </>
       )}

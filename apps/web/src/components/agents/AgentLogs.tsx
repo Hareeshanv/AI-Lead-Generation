@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/Card";
 import { ErrorState, LoadingState } from "@/components/ui/QueryState";
 import { useAgentLogs } from "@/hooks/useAgents";
 import { cn } from "@/lib/utils";
-import { formatDateTime, formatTime } from "./shared";
+import { formatTime } from "./shared";
+import { formatDateTime } from "@/lib/utils";
 
 const LEVEL_CLASS = {
   error: "text-rose-600 dark:text-rose-400",
