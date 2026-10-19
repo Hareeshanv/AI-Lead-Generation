@@ -21,7 +21,23 @@ if (envPath) {
   dotenv.config();
 }
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://ubdjmnmmonymumvhvedd.supabase.co";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
+// The anon role has no table grants (RLS migration 0009), so the server needs the service role key.
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-export const dbClient: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+export const isDbConfigured = !!supabaseUrl && !!supabaseKey;
+
+if (!isDbConfigured) {
+  console.error(
+    "[DB] Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the root .env. " +
+      "All database calls will fail."
+  );
+}
+
+// createClient throws on an empty URL, so an unroutable URL keeps the module importable
+// while every query fails with a visible error.
+export const dbClient: SupabaseClient = createClient(
+  supabaseUrl || "http://supabase-not-configured.invalid",
+  supabaseKey || "supabase-key-not-configured",
+  { auth: { persistSession: false, autoRefreshToken: false } }
+);
