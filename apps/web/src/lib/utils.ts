@@ -1,28 +1,36 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { LeadSourcePlatform } from "@/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(amount);
+/** Workspace number formatting; updated from /api/me by `useMe`. */
+const orgFormat = { currency: "INR", locale: "en-IN" };
+
+export function setOrgFormat(format: { currency?: string; locale?: string }): void {
+  if (format.currency) orgFormat.currency = format.currency;
+  if (format.locale) orgFormat.locale = format.locale;
 }
 
-export function formatNumber(num: number): string {
-  return new Intl.NumberFormat("en-US", { notation: "compact" }).format(num);
+export function formatCurrency(amount: number, currency: string = orgFormat.currency): string {
+  try {
+    return new Intl.NumberFormat(orgFormat.locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
+  } catch {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  }
 }
 
-export function formatDate(dateString: string): string {
-  if (!dateString) return "";
-  const date = new Date(dateString);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+export const sourcePlatformLabel = (platform?: LeadSourcePlatform | null): string => {
+  if (platform === "meta") return "Meta (IG/FB)";
+  if (platform === "google") return "Google Ads";
+  return "Other";
+};
+
+export const formatConsentTime = (iso?: string | null): string | null => {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+};

@@ -3,14 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "preview": "node -e \"process.env.NEXT_DIST_DIR='.next-preview';require('child_process').execSync('next build && next start -p 3001',{stdio:'inherit',env:process.env})\"",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.1.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@hookform/resolvers": "^3.3.4",
-    "@supabase/supabase-js": "^2.39.8",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.114.0",
     "@tanstack/react-query": "^5.28.4",
     "@tanstack/react-table": "^8.15.0",
     "axios": "^1.6.8",

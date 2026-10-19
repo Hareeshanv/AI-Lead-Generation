@@ -1,244 +1,231 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import React, { useMemo } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowUpRight, BarChart3, DollarSign, Flame, LayoutDashboard, TrendingUp, Users } from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Avatar } from "@/components/ui/Avatar";
-import { Badge } from "@/components/ui/Badge";
-import { useLeadStore } from "@/stores/useLeadStore";
-import { mockAgents, mockNotifications, mockAnalyticsData } from "@/lib/mockData";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorState } from "@/components/ui/QueryState";
+import { Spinner } from "@/components/ui/LoadingSkeleton";
+import { useAnalyticsSummary } from "@/hooks/useAnalytics";
+import { cn, formatCurrency } from "@/lib/utils";
 import {
-  Users,
-  Flame,
-  Zap,
-  TrendingUp,
-  DollarSign,
-  Bot,
-  Sparkles,
-  Search,
-  Plus,
-  ArrowUpRight,
-  Calendar as CalendarIcon,
-  CheckCircle2,
-  Terminal,
-  Activity,
-  Radio,
-} from "lucide-react";
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip as RechartsTooltip,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-} from "recharts";
-import Link from "next/link";
+  bucketLabel,
+  compareChange,
+  formatNumber,
+  formatRate,
+  presetRange,
+  scoreBadgeClass,
+  tooltipStyle,
+  useChartTheme,
+} from "@/lib/analytics";
 
 export default function DashboardPage() {
-  const { leads, fetchLeads } = useLeadStore();
+  const router = useRouter();
+  const chart = useChartTheme();
+  const range = useMemo(() => presetRange("30d"), []);
+  const query = useAnalyticsSummary(range);
+  const summary = query.data;
+  const cur = summary?.current;
+  const prev = summary?.previous;
 
-  useEffect(() => {
-    fetchLeads();
-  }, [fetchLeads]);
+  const series = useMemo(
+    () => (summary?.timeseries ?? []).map((p) => ({ ...p, label: bucketLabel(p.bucket, summary!.range.bucket) })),
+    [summary]
+  );
+  const openStages = useMemo(() => (summary?.pipeline.byStage ?? []).filter((s) => !s.closed), [summary]);
 
-  const hotLeads = leads.filter((l) => l.score >= 80).length;
-  const totalLeadsVal = leads.length > 0 ? leads.length.toString() : "2,840";
-  const hotLeadsVal = leads.length > 0 ? hotLeads : 48;
-
-  const terminalLogs = [
-    { time: "01:21:05", tag: "AGENT_04", msg: "Email sequence A/B test completed", status: "success" },
-    { time: "01:20:59", tag: "PIPELINE", msg: "Syncing with CRM successful", status: "info" },
-    { time: "01:20:55", tag: "DATA_SYNC", msg: "Updating lead health scores", status: "success" },
-    { time: "01:20:51", tag: "NEURAL_NET", msg: "New intent match found for enterprise tier", status: "alert" },
-    { time: "01:20:47", tag: "PIPELINE", msg: "Enriching social signals for prospect...", status: "info" },
-    { time: "01:20:39", tag: "AGENT_07", msg: "Verifying email deliverability via Hunter.io", status: "success" },
-  ];
-
-  const displayedLeads = [
-    { name: "Sarah Chen", title: "VP, CloudScale Inc.", score: 98, avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80" },
-    { name: "Alex Rivera", title: "CTO, DataNexus Pro", score: 92, avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80" },
-    { name: "Jordan Smith", title: "Head, Quantum Labs", score: 85, avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80" },
-  ];
+  const show = (value: string) => (summary ? value : "–");
+  const vsPrev = "vs previous 30 days";
 
   return (
-    <DashboardLayout>
-      {/* Top Banner & Quick Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel p-6 rounded-2xl border border-emerald-500/20">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
-            Nexus AI Operations <Sparkles className="w-5 h-5 text-emerald-400 animate-pulse" />
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Core Engine V2.4 Active • 14 agents actively discovering & enriching prospects
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge variant="outline" className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-            <Radio className="w-3 h-3 mr-1 animate-pulse inline" /> LIVE STREAM
-          </Badge>
-          <Link href="/agents">
-            <Button variant="primary" size="sm" className="bg-emerald-600 hover:bg-emerald-500">
-              <Plus className="w-4 h-4 mr-1.5" /> + New Campaign
+    <>
+      <PageHeader
+        title="Dashboard"
+        description="Lead volume, quality and pipeline for the last 30 days."
+        icon={LayoutDashboard}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={() => router.push("/analytics")}>
+              <BarChart3 className="w-4 h-4" /> Analytics
             </Button>
-          </Link>
-        </div>
-      </div>
+            <Button variant="primary" size="sm" onClick={() => router.push("/leads")}>
+              <Users className="w-4 h-4" /> View leads
+            </Button>
+          </>
+        }
+      />
 
-      {/* Top Row Bento: Terminal Console & Hot Leads */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Terminal Activity Log Feed */}
-        <Card glass className="lg:col-span-2 p-5 border border-emerald-500/20 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-5 h-5 text-emerald-400" />
-              <h2 className="text-base font-bold text-foreground tracking-tight">Live AI Agent Fleet</h2>
-            </div>
-            <Badge variant="outline" className="text-[10px] font-mono text-emerald-400 border-emerald-500/30">
-              ● LIVE STREAM
-            </Badge>
+      {query.isError && !summary ? (
+        <ErrorState title="Couldn't load your dashboard" error={query.error} onRetry={() => void query.refetch()} />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            <MetricCard
+              title="New leads"
+              value={show(formatNumber(cur?.leads))}
+              subtitle={vsPrev}
+              {...compareChange(cur?.leads, prev?.leads)}
+              icon={<Users className="w-5 h-5" />}
+            />
+            <MetricCard
+              title="Hot leads"
+              value={show(formatNumber(cur?.hotLeads))}
+              subtitle="At or above the hot score threshold"
+              {...compareChange(cur?.hotLeads, prev?.hotLeads)}
+              icon={<Flame className="w-5 h-5" />}
+            />
+            <MetricCard
+              title="Lead → deal"
+              value={show(formatRate(cur?.leadToDealRate))}
+              subtitle={cur ? `${formatNumber(cur.leadsWithDeal)} of new leads have a deal` : undefined}
+              {...compareChange(cur?.leadToDealRate, prev?.leadToDealRate, { kind: "rate" })}
+              icon={<TrendingUp className="w-5 h-5" />}
+            />
+            <MetricCard
+              title="Open pipeline"
+              value={show(formatCurrency(summary?.pipeline.openValue ?? 0))}
+              subtitle={
+                summary
+                  ? `${summary.pipeline.openDeals} open deal${summary.pipeline.openDeals === 1 ? "" : "s"} · ${formatCurrency(summary.pipeline.weightedValue)} weighted`
+                  : undefined
+              }
+              icon={<DollarSign className="w-5 h-5" />}
+            />
           </div>
-          <div className="font-mono text-xs space-y-2.5 bg-black/60 p-4 rounded-xl border border-white/5 overflow-x-auto">
-            {terminalLogs.map((log, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-muted-foreground text-[11px]">{log.time}</span>
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">
-                  [{log.tag}]
-                </span>
-                <span className="text-slate-200">{log.msg}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
 
-        {/* Hot Leads Widget */}
-        <Card glass className="p-5 border border-white/10 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-foreground">Hot Leads</h2>
-            <Link href="/leads" className="text-xs text-emerald-400 hover:underline">View All</Link>
-          </div>
-          <div className="space-y-3">
-            {displayedLeads.map((lead, i) => (
-              <div key={i} className="p-3 rounded-xl bg-card/60 border border-white/5 flex items-center justify-between hover:border-emerald-500/30 transition-all">
-                <div className="flex items-center gap-3">
-                  <Avatar src={lead.avatar} name={lead.name} className="w-9 h-9" />
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">{lead.name}</h3>
-                    <p className="text-xs text-muted-foreground">{lead.title}</p>
+          {!summary ? (
+            <Card className="py-12">
+              <Spinner label="Loading dashboard" />
+            </Card>
+          ) : summary.current.leads === 0 && summary.pipeline.openDeals === 0 && summary.recentLeads.length === 0 ? (
+            <EmptyState
+              icon={BarChart3}
+              title="No lead data yet"
+              description="Charts appear here once leads are added, captured from a connected lead source or found by the AI agent."
+              actionLabel="Go to leads"
+              onAction={() => router.push("/leads")}
+            />
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card className="lg:col-span-2 p-6">
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-foreground">New leads and deals</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Per {summary.range.bucket}, last 30 days ({summary.range.timezone})
+                  </p>
+                </div>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={series}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} vertical={false} />
+                      <XAxis dataKey="label" stroke={chart.axis} fontSize={12} tickLine={false} minTickGap={16} />
+                      <YAxis stroke={chart.axis} fontSize={12} tickLine={false} allowDecimals={false} />
+                      <RechartsTooltip contentStyle={tooltipStyle(chart)} />
+                      <Area type="monotone" dataKey="leads" name="Leads" stroke={chart.primary} fill={chart.primary} fillOpacity={0.15} strokeWidth={2} />
+                      <Area type="monotone" dataKey="deals" name="Deals" stroke={chart.series[2]} fill={chart.series[2]} fillOpacity={0.1} strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+
+              <Card className="p-6">
+                <div className="mb-4">
+                  <h2 className="text-base font-semibold text-foreground">Open pipeline by stage</h2>
+                  <p className="text-xs text-muted-foreground">Deal value per stage, right now</p>
+                </div>
+                {openStages.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-12 text-center">No open deals.</p>
+                ) : (
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={openStages} layout="vertical" margin={{ left: 12 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} horizontal={false} />
+                        <XAxis type="number" stroke={chart.axis} fontSize={11} tickLine={false} tickFormatter={(v) => formatCurrency(Number(v))} />
+                        <YAxis type="category" dataKey="stage" stroke={chart.axis} fontSize={12} width={90} tickLine={false} />
+                        <RechartsTooltip
+                          contentStyle={tooltipStyle(chart)}
+                          cursor={{ fill: chart.grid, opacity: 0.4 }}
+                          formatter={(val, name) => [formatCurrency(Number(val)), String(name)]}
+                        />
+                        <Bar dataKey="value" name="Value" fill={chart.secondary} radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="weightedValue" name="Weighted" fill={chart.primary} radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
-                </div>
-                <div className="px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 font-mono font-bold text-xs border border-emerald-500/30">
-                  {lead.score}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* KPI Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <MetricCard
-          title="Total Leads"
-          value={totalLeadsVal}
-          change="+12.4% vs last mo"
-          isPositive={true}
-          icon={<Users className="w-5 h-5 text-emerald-400" />}
-        />
-        <MetricCard
-          title="Hot ICP"
-          value={hotLeadsVal.toString()}
-          change="Immediate Action"
-          isPositive={true}
-          icon={<Flame className="w-5 h-5 text-rose-400" />}
-        />
-        <MetricCard
-          title="Conversion"
-          value="25.8%"
-          change="Optimized Flow"
-          isPositive={true}
-          icon={<TrendingUp className="w-5 h-5 text-emerald-400" />}
-        />
-        <MetricCard
-          title="Revenue"
-          value="$310,000"
-          change="Projected"
-          isPositive={true}
-          icon={<DollarSign className="w-5 h-5 text-cyan-400" />}
-        />
-      </div>
-
-      {/* Growth & Trajectory & Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card glass className="lg:col-span-2 p-6 border border-white/10">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-bold text-foreground">Growth & Trajectory</h2>
-              <p className="text-xs text-muted-foreground">AI-predicted performance for the next 30 days</p>
+                )}
+              </Card>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="indigo" className="text-xs cursor-pointer">Leads</Badge>
-              <Badge variant="outline" className="text-xs cursor-pointer">Revenue</Badge>
-            </div>
-          </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={mockAnalyticsData.monthlyGrowth}>
-                <XAxis dataKey="month" stroke="#94a3b8" fontSize={12} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} />
-                <RechartsTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "8px" }} />
-                <Bar dataKey="leads" fill="#10b981" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
+          )}
 
-        <Card glass className="p-6 border border-white/10">
-          <div className="mb-4">
-            <h2 className="text-base font-bold text-foreground">Lead Source</h2>
-            <p className="text-xs text-muted-foreground">Distribution</p>
-          </div>
-          <div className="h-48 w-full flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={mockAnalyticsData.leadSources}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {mockAnalyticsData.leadSources.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <RechartsTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "8px" }} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="space-y-1.5 mt-2">
-            {mockAnalyticsData.leadSources.map((source) => (
-              <div key={source.name} className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: source.color }} />
-                  {source.name}
-                </span>
-                <span className="font-semibold text-foreground">{source.value}%</span>
+          {summary && summary.recentLeads.length > 0 && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">Recent leads</h2>
+                  <p className="text-xs text-muted-foreground">The six most recently added leads</p>
+                </div>
+                <Link href="/leads" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                  View all <ArrowUpRight className="w-3.5 h-3.5" />
+                </Link>
               </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </DashboardLayout>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="text-xs text-muted-foreground border-b border-border">
+                    <tr>
+                      <th className="pb-3 font-medium">Lead</th>
+                      <th className="pb-3 font-medium">Company</th>
+                      <th className="pb-3 font-medium">Title</th>
+                      <th className="pb-3 font-medium">Score</th>
+                      <th className="pb-3 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {summary.recentLeads.map((lead) => (
+                      <tr key={lead.id} className="hover:bg-muted/40 transition-colors">
+                        <td className="py-3">
+                          <Link href={`/leads/${lead.id}`} className="font-medium text-foreground hover:text-primary">
+                            {lead.name}
+                          </Link>
+                          {lead.email && lead.email !== "Not available" && (
+                            <div className="text-xs text-muted-foreground">{lead.email}</div>
+                          )}
+                        </td>
+                        <td className="py-3 text-muted-foreground">{lead.company || "—"}</td>
+                        <td className="py-3 text-muted-foreground">{lead.title || "—"}</td>
+                        <td className="py-3">
+                          <span className={cn("px-2 py-0.5 rounded-full text-xs font-mono font-semibold border", scoreBadgeClass(lead.score))}>
+                            {lead.score}
+                          </span>
+                        </td>
+                        <td className="py-3">
+                          <StatusBadge status={lead.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+    </>
   );
 }
-

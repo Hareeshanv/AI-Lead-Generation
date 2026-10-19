@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useId } from "react";
 import { X } from "lucide-react";
 import { Button } from "./Button";
 
@@ -11,6 +11,7 @@ export interface ModalProps {
 }
 
 export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
+  const titleId = useId();
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,9 +30,16 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg glass-panel rounded-2xl border border-white/10 shadow-2xl p-6 overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative w-full max-w-lg glass-panel rounded-2xl border border-white/10 shadow-2xl p-6 overflow-hidden"
+      >
         <div className="flex items-center justify-between pb-4 border-b border-border">
-          <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+          <h3 id={titleId} className="text-lg font-semibold text-foreground">
+            {title}
+          </h3>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close modal">
             <X className="w-4 h-4" />
           </Button>

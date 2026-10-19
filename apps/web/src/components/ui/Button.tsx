@@ -18,7 +18,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       outline: "border border-border bg-transparent hover:bg-muted text-foreground",
       ghost: "hover:bg-muted text-muted-foreground hover:text-foreground",
       destructive: "bg-destructive text-white hover:bg-destructive/90 shadow-lg shadow-destructive/20",
-      glass: "glass-panel text-white hover:bg-white/10 border border-white/10 shadow-md",
+      glass: "glass-panel text-foreground hover:bg-muted/60 border border-border shadow-sm",
     };
 
     const sizes = {
@@ -36,7 +36,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       >
         {isLoading ? (
-          <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+          <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
         ) : null}
         {children}
       </button>

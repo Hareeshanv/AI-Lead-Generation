@@ -1,28 +1,37 @@
 import React from "react";
-import { Badge } from "./Badge";
+import { Badge, BadgeProps } from "./Badge";
 
-export const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+const statusVariant = (status: string): NonNullable<BadgeProps["variant"]> => {
   switch (status.toLowerCase()) {
     case "hot":
     case "active":
     case "running":
     case "verified":
     case "success":
-      return <Badge variant="success">🔥 {status}</Badge>;
+    case "completed":
+    case "closed":
+    case "closed won":
+      return "success";
     case "warm":
     case "qualified":
     case "pending":
-      return <Badge variant="warning">⚡ {status}</Badge>;
+      return "warning";
     case "cold":
     case "idle":
     case "paused":
     case "draft":
-      return <Badge variant="secondary">❄️ {status}</Badge>;
+      return "secondary";
     case "error":
     case "bounced":
     case "closed lost":
-      return <Badge variant="danger">❌ {status}</Badge>;
+      return "danger";
     default:
-      return <Badge variant="indigo">{status}</Badge>;
+      return "indigo";
   }
 };
+
+export const StatusBadge: React.FC<{ status: string; className?: string }> = ({ status, className }) => (
+  <Badge variant={statusVariant(status)} className={className}>
+    {status}
+  </Badge>
+);
