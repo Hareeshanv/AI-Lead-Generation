@@ -31,6 +31,25 @@ async function sendInviteEmail(email: string, orgId: string): Promise<string | n
   return error ? error.message : null;
 }
 
+/**
+ * Existing accounts are never added directly: they get a sign-in link to the accept page and
+ * join only after accepting (the invitation also shows up under GET /api/me/invitations).
+ */
+async function sendAcceptEmail(email: string, token: string): Promise<string | null> {
+  const { error } = await dbClient.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: `${webAppUrl()}/invitations/accept?token=${encodeURIComponent(token)}`,
+    },
+  });
+  return error ? error.message : null;
+}
+
+function inviteOutcome(emailError: string | null) {
+  return { outcome: emailError ? "pending_email_failed" : "invited", ...(emailError ? { emailError } : {}) };
+}
+
 // GET /api/members — active members plus pending invitees (status "pending")
 membersRouter.get("/", async (req, res) => {
   const { orgId } = getCtx(req);
@@ -71,10 +90,13 @@ membersRouter.post(
     const member = (await orgsDb.listMembers(orgId, { includePending: true })).find((m) => m.user_id === userId);
     const email = member?.profile?.email;
     if (!email) throw HttpError.conflict("This invitee has no email address on file.");
-    if (current.invitation_id) await orgsDb.extendInvitation(orgId, current.invitation_id);
+    const invitation = current.invitation_id ? await orgsDb.extendInvitation(orgId, current.invitation_id) : null;
 
-    const emailError = await sendInviteEmail(email, orgId);
-    send(res, { outcome: emailError ? "pending_email_failed" : "invited", ...(emailError ? { emailError } : {}) });
+    if (current.requires_acceptance) {
+      if (!invitation) throw HttpError.conflict("This invitation is no longer pending. Remove the invitee and invite them again.");
+      return send(res, inviteOutcome(await sendAcceptEmail(email, invitation.token)));
+    }
+    send(res, inviteOutcome(await sendInviteEmail(email, orgId)));
   }
 );
 
@@ -118,8 +140,9 @@ const inviteSchema = z
   })
   .strict();
 
-// POST /api/invitations — existing accounts are added immediately; new emails get a Supabase invite
-// email and show up as pending members until they accept.
+// POST /api/invitations — every invitee shows up as a pending member until they accept. New emails get a
+// Supabase invite email; existing accounts get a link to accept. The response is the same either way so
+// it does not reveal whether the email has an account.
 invitationsRouter.post(
   "/",
   rateLimit({ name: "invite", windowMs: 60 * 60 * 1000, max: 50 }),
@@ -137,24 +160,11 @@ invitationsRouter.post(
     const invitation = await orgsDb.createInvitation(orgId, email, role, userId);
     events.emit("member.invited", { orgId, actorId: userId, email, role, invitationId: invitation.id });
 
-    if (existingProfile) {
-      await orgsDb.addMember(orgId, existingProfile.id, role, invitation.id);
-      await orgsDb.setInvitationStatus(orgId, invitation.id, "accepted");
-      invalidateMembershipCache(existingProfile.id);
-      events.emit("member.joined", { orgId, actorId: userId, userId: existingProfile.id, role });
-      return send(res, { invitation: { ...toInvitationDto(invitation), status: "accepted" }, outcome: "added" }, 201);
-    }
-
-    const emailError = await sendInviteEmail(email, orgId);
-    send(
-      res,
-      {
-        invitation: toInvitationDto(invitation),
-        outcome: emailError ? "pending_email_failed" : "invited",
-        ...(emailError ? { emailError } : {}),
-      },
-      201
-    );
+    if (existingProfile) await orgsDb.addPendingMember(orgId, existingProfile.id, role, invitation.id);
+    const emailError = existingProfile
+      ? await sendAcceptEmail(email, invitation.token)
+      : await sendInviteEmail(email, orgId);
+    send(res, { invitation: toInvitationDto(invitation), ...inviteOutcome(emailError) }, 201);
   }
 );
 

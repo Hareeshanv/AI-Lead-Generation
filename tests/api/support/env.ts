@@ -41,6 +41,9 @@ const PROVIDER_ENV = [
   "META_APP_ID",
   "META_APP_SECRET",
   "META_VERIFY_TOKEN",
+  "PLATFORM_MANAGED_PROVIDERS",
+  "PLATFORM_MANAGED_ORG_IDS",
 ];
 // Empty strings (not deletes) so the database package's dotenv load cannot repopulate them from the root .env.
 for (const key of PROVIDER_ENV) process.env[key] = "";
+process.env.CAMPAIGN_UNSUBSCRIBE_SECRET = "api-test-unsubscribe-secret";

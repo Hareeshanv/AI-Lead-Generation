@@ -44,6 +44,18 @@ export const integrationsDb = {
     return data ? toRow(data) : null;
   },
 
+  /** Webhook routing across orgs: orgs whose saved config has `key` = `value` (e.g. a WhatsApp phone number id). */
+  async findOrgIdsByConfig(provider: string, key: string, value: string, limit = 5): Promise<string[]> {
+    const { data, error } = await dbClient
+      .from("integration_credentials")
+      .select("org_id")
+      .eq("provider", provider)
+      .eq(`config->>${key}`, value)
+      .limit(limit);
+    if (error) throw dbError("find integration by config", error);
+    return (data || []).map((r: { org_id: string }) => r.org_id);
+  },
+
   /** Decrypted secret JSON string, or null when nothing is stored. */
   async getSecret(orgId: string, provider: string): Promise<string | null> {
     const { data, error } = await dbClient.rpc("get_integration_secret", { p_org_id: orgId, p_provider: provider });

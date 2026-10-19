@@ -24,6 +24,9 @@ import {
   testIntegration,
 } from "../integrations/service";
 import { publicUrlProblem, slackWebhookUrlProblem } from "../integrations/providers";
+import { logger } from "../logger";
+
+const log = logger.child({ module: "integrations" });
 
 const GRAPH_VERSION = "v21.0";
 const GRAPH_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -55,6 +58,12 @@ function webhookBaseUrl(): string {
 
 function googleWebhookUrl(sourceId: string): string {
   return `${webhookBaseUrl()}/functions/v1/lead-webhook?source=google&source_id=${encodeURIComponent(sourceId)}`;
+}
+
+/** Callback URL for a workspace's own Meta app; the edge function verifies it with that workspace's "meta" secret. */
+function metaWebhookUrl(orgId: string): string | null {
+  const base = webhookBaseUrl();
+  return base ? `${base}/functions/v1/lead-webhook?org_id=${encodeURIComponent(orgId)}` : null;
 }
 
 function toSourceDto(row: Record<string, any>) {
@@ -174,7 +183,7 @@ integrationsPublicRouter.get("/meta/callback", async (req, res) => {
         });
       } catch (err: any) {
         const message = graphErrorMessage(err);
-        console.error(`[Integrations] Meta page ${page.id} setup failed: ${message}`);
+        log.error("Meta page setup failed", { orgId: oauth.orgId, pageId: page.id, error: message });
         failures.push(`${page.name || page.id}: ${message}`);
       }
     }
@@ -185,7 +194,7 @@ integrationsPublicRouter.get("/meta/callback", async (req, res) => {
     redirectToWeb(res, { meta: "connected" });
   } catch (err: any) {
     const message = graphErrorMessage(err);
-    console.error(`[Integrations] Meta OAuth callback failed: ${message}`);
+    log.error("Meta OAuth callback failed", { orgId: oauth.orgId, error: message });
     redirectToWeb(res, { meta: "error", message });
   }
 });
@@ -259,7 +268,7 @@ integrationsRouter.get("/", async (req, res) => {
     dbQueries.getLeadSources(orgId),
     resolveProviderCredentials(orgId, "meta"),
   ]);
-  send(res, { providers, sources: rows.map(toSourceDto), metaConfigured: !!meta });
+  send(res, { providers, sources: rows.map(toSourceDto), metaConfigured: !!meta, metaWebhookUrl: metaWebhookUrl(orgId) });
 });
 
 // POST /api/integrations/meta/connect-url (admin) — Facebook Login URL bound to this workspace
@@ -359,7 +368,7 @@ integrationsRouter.delete("/:id", requireRole("admin"), async (req, res) => {
   try {
     await dbQueries.deleteLeadSourceToken(id);
   } catch (err: any) {
-    console.error(`[Integrations] Vault token cleanup for ${id} failed: ${err?.message || err}`);
+    log.error("Vault token cleanup failed", { orgId, sourceId: id, err });
   }
   await dbQueries.deleteLeadSource(orgId, id);
   send(res, { id });

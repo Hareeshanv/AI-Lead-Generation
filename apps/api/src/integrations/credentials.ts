@@ -1,4 +1,7 @@
 import { integrationsDb, isDbConfigured } from "@ai-lead-gen/database";
+import { logger } from "../logger";
+
+const log = logger.child({ module: "integrations" });
 
 export type IntegrationProvider = "resend" | "whatsapp" | "serper" | "sarvam" | "slack" | "webhook" | "meta";
 
@@ -213,6 +216,29 @@ export function completeCredentials(provider: IntegrationProvider, raw: Record<s
   return values;
 }
 
+/** Workspaces must bring their own Slack and webhook targets: env values would receive another workspace's lead data. */
+const NEVER_PLATFORM_MANAGED: ReadonlySet<IntegrationProvider> = new Set(["slack", "webhook"]);
+
+function envList(name: string): string[] {
+  return (process.env[name] || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Whether the server's env credentials may stand in for a workspace that has not saved its own.
+ * Off unless PLATFORM_MANAGED_PROVIDERS lists the provider (or "*"); PLATFORM_MANAGED_ORG_IDS, when
+ * set, limits it to those workspaces. Never for Slack or outbound webhooks.
+ */
+export function isPlatformManaged(orgId: string, provider: IntegrationProvider): boolean {
+  if (NEVER_PLATFORM_MANAGED.has(provider)) return false;
+  const providers = envList("PLATFORM_MANAGED_PROVIDERS");
+  if (!providers.includes("*") && !providers.includes(provider)) return false;
+  const orgs = envList("PLATFORM_MANAGED_ORG_IDS");
+  return orgs.length === 0 || orgs.includes("*") || orgs.includes(orgId.toLowerCase());
+}
+
 export function envCredentials(provider: IntegrationProvider): Record<string, string> | null {
   const raw: Record<string, unknown> = {};
   for (const field of PROVIDER_SPECS[provider].fields) raw[field.key] = process.env[field.env];
@@ -228,7 +254,7 @@ async function vaultCredentials(orgId: string, provider: IntegrationProvider): P
     try {
       secrets = JSON.parse(secretJson);
     } catch {
-      console.error(`[Integrations] Stored ${provider} secret for org ${orgId} is not valid JSON.`);
+      log.error("Stored secret is not valid JSON", { orgId, provider });
       return null;
     }
   }
@@ -237,7 +263,8 @@ async function vaultCredentials(orgId: string, provider: IntegrationProvider): P
 
 /**
  * Credentials for a provider and where they came from: the workspace's Vault-stored credentials
- * when saved, otherwise the server env vars. Null when neither is complete.
+ * when saved, otherwise the server env vars if the provider is platform-managed for this workspace
+ * (see isPlatformManaged). Null when nothing usable is configured.
  */
 export async function resolveProviderCredentials(
   orgId: string,
@@ -253,10 +280,10 @@ export async function resolveProviderCredentials(
       const values = await vaultCredentials(orgId, provider);
       if (values) resolved = { values, source: "vault" };
     } catch (err: any) {
-      console.error(`[Integrations] Reading ${provider} credentials for org ${orgId} failed: ${err?.message || err}`);
+      log.error("Reading credentials failed", { orgId, provider, err });
     }
   }
-  if (!resolved) {
+  if (!resolved && isPlatformManaged(orgId, provider)) {
     const values = envCredentials(provider);
     if (values) resolved = { values, source: "env" };
   }
@@ -266,7 +293,7 @@ export async function resolveProviderCredentials(
   return resolved;
 }
 
-/** Workspace credentials from Vault, falling back to env vars; null when the provider is not configured. */
+/** Workspace credentials from Vault (or platform-managed env vars); null when the provider is not configured. */
 export async function getProviderCredentials(
   orgId: string,
   provider: IntegrationProvider

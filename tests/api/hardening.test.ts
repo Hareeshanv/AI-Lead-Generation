@@ -214,6 +214,30 @@ describe.skipIf(!hasDb())("pending invitations", () => {
     }
   });
 
+  it("an existing account is not added until it accepts, and can decline", async () => {
+    const orgA = user("adminA").orgId;
+    const invitee = user("adminC");
+    const res = await as("adminA").post("/api/invitations", { email: invitee.email, role: "member" });
+    expect(res.status).toBe(201);
+    expect(["invited", "pending_email_failed"]).toContain(res.body.data.outcome);
+    expect(res.body.data.invitation.status).toBe("pending");
+
+    const members = (await as("adminA").get("/api/members")).body.data as Array<{ userId: string; status: string; fullName: string | null }>;
+    expect(members.find((m) => m.userId === invitee.id)).toMatchObject({ status: "pending", fullName: null });
+
+    const me = (await as("adminC").get("/api/me")).body.data as { memberships: Array<{ orgId: string }> };
+    expect(me.memberships.map((m) => m.orgId)).not.toContain(orgA);
+
+    const invites = (await as("adminC").get("/api/me/invitations")).body.data as Array<{ orgId: string }>;
+    expect(invites.map((i) => i.orgId)).toContain(orgA);
+
+    expect((await as("adminC").post(`/api/me/invitations/${orgA}/decline`)).status).toBe(204);
+    const after = (await as("adminA").get("/api/members")).body.data as Array<{ userId: string }>;
+    expect(after.map((m) => m.userId)).not.toContain(invitee.id);
+    const inv = await adminDb().from("invitations").select("status").eq("id", res.body.data.invitation.id).single();
+    expect(inv.data?.status).toBe("revoked");
+  });
+
   it("revoking a pending member removes them and revokes the invitation", async () => {
     const orgId = user("adminA").orgId;
     const email = `qa-revoke-${runId()}-${Math.random().toString(36).slice(2, 6)}@example.com`;

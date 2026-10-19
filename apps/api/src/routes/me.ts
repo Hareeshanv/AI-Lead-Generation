@@ -3,9 +3,9 @@ import { orgsDb } from "@ai-lead-gen/database";
 import { createRouter } from "../http/router";
 import { HttpError } from "../http/errors";
 import { send } from "../http/pagination";
-import { parse } from "../http/validate";
+import { parse, parseId } from "../http/validate";
 import { getCtx, invalidateMembershipCache } from "../middleware/auth";
-import { loadAccount, NOTIFICATION_PREF_KEYS, notificationPrefs } from "../services/account";
+import { loadAccount, NOTIFICATION_PREF_KEYS, notificationPrefs, toPendingInviteDto } from "../services/account";
 import { events } from "../events";
 
 /** Mounted at /api/me with auth "user": signed in, workspace membership optional. */
@@ -16,9 +16,12 @@ function authUser(req: Parameters<typeof getCtx>[0]) {
   return req.authUser;
 }
 
-/** Activates the caller's pending invitations; returns the org ids joined. */
-async function acceptPendingInvitations(userId: string): Promise<string[]> {
-  const joined = await orgsDb.acceptPendingMemberships(userId);
+/**
+ * Activates the caller's pending invitations; returns the org ids joined. Without orgId this only
+ * covers invites the user signed up through; invites to an existing account need an explicit accept.
+ */
+async function acceptPendingInvitations(userId: string, orgId?: string): Promise<string[]> {
+  const joined = await orgsDb.acceptPendingMemberships(userId, orgId);
   if (joined.length === 0) return [];
   invalidateMembershipCache(userId);
   for (const m of joined) events.emit("member.joined", { orgId: m.org_id, actorId: userId, userId, role: m.role });
@@ -74,6 +77,31 @@ meRouter.patch("/", async (req, res) => {
   await orgsDb.ensureProfile(ctx.userId, ctx.email);
   if (Object.keys(patch).length > 0) await orgsDb.updateProfile(ctx.userId, patch);
   send(res, await loadAccount(authUser(req), body.defaultOrgId || ctx.orgId));
+});
+
+// GET /api/me/invitations — workspaces that invited the caller and are waiting for an accept/decline
+meRouter.get("/invitations", async (req, res) => {
+  const { userId } = getCtx(req);
+  send(res, (await orgsDb.listPendingInvitesForUser(userId)).map(toPendingInviteDto));
+});
+
+// POST /api/me/invitations/:orgId/accept — join a workspace the caller was invited to
+meRouter.post("/invitations/:orgId/accept", async (req, res) => {
+  const { userId } = getCtx(req);
+  const orgId = parseId(req.params.orgId, "workspace id");
+  const joined = await acceptPendingInvitations(userId, orgId);
+  if (joined.length === 0) throw HttpError.notFound("Invitation");
+  send(res, await loadAccount(authUser(req), orgId));
+});
+
+// POST /api/me/invitations/:orgId/decline — remove the caller's pending membership and revoke the invite
+meRouter.post("/invitations/:orgId/decline", async (req, res) => {
+  const { userId } = getCtx(req);
+  const orgId = parseId(req.params.orgId, "workspace id");
+  const declined = await orgsDb.declinePendingMembership(userId, orgId);
+  if (!declined) throw HttpError.notFound("Invitation");
+  if (declined.invitation_id) await orgsDb.setInvitationStatus(orgId, declined.invitation_id, "revoked");
+  res.status(204).end();
 });
 
 // POST /api/me/invitations/accept — join a workspace with an invitation token (existing accounts)

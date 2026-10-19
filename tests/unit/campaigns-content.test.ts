@@ -6,6 +6,7 @@ import {
   publicApiUrl,
   renderTemplate,
   templateVariables,
+  unsubscribeConfigured,
   unsubscribeToken,
   unsubscribeUrl,
   verifyUnsubscribeToken,
@@ -197,10 +198,11 @@ describe("unsubscribe tokens", () => {
     expect(verifyUnsubscribeToken(first)).toBeNull();
   });
 
-  it("falls back to the service role key as the secret", () => {
+  it("never falls back to the service role key", () => {
     vi.stubEnv("CAMPAIGN_UNSUBSCRIBE_SECRET", "");
-    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "fallback-secret");
-    expect(verifyUnsubscribeToken(unsubscribeToken(MESSAGE_ID))).toBe(MESSAGE_ID);
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+    expect(unsubscribeConfigured()).toBe(false);
+    expect(() => unsubscribeToken(MESSAGE_ID)).toThrow(/CAMPAIGN_UNSUBSCRIBE_SECRET/);
   });
 
   it("rejects tampered or malformed tokens", () => {

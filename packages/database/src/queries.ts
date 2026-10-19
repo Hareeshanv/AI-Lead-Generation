@@ -55,16 +55,6 @@ const withOrg = <T extends Record<string, any>>(orgId: string, row: T) => ({ ...
 /** Every query on org-owned data takes orgId first; system-wide jobs are marked as such. */
 export const dbQueries = {
   // Leads
-  async getAllLeads(orgId: string) {
-    const { data, error } = await dbClient
-      .from("leads")
-      .select("*")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false });
-    if (error) throw dbError("get leads", error);
-    return data || [];
-  },
-
   async insertLead(orgId: string, leadData: Record<string, any>) {
     const { data, error } = await dbClient.from("leads").insert([withOrg(orgId, leadData)]).select();
     if (error) throw dbError("insert lead", error);
@@ -255,25 +245,6 @@ export const dbQueries = {
     return (data || []).length > 0;
   },
 
-  /** System-wide (background scorer): ad-form leads that have not been intent-scored yet. */
-  async getUnscoredAdLeads(limit: number = 50) {
-    const { data, error } = await dbClient
-      .from("leads")
-      .select("*")
-      .is("scored_at", null)
-      .not("source_platform", "is", null)
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    if (error) throw dbError("get unscored leads", error);
-    return data || [];
-  },
-
-  /** System-wide (background scorer); the lead id comes from getUnscoredAdLeads. */
-  async updateLeadScore(leadId: string, score: number, status: string, scoredAt: string) {
-    const { error } = await dbClient.from("leads").update({ score, status, scored_at: scoredAt }).eq("id", leadId);
-    if (error) throw dbError("update lead score", error);
-  },
-
   // Lead sources (ad platform integrations)
   async getLeadSources(orgId: string) {
     const { data, error } = await dbClient
@@ -398,13 +369,6 @@ export const dbQueries = {
   async createPipelineRun(orgId: string, runData: Record<string, any>) {
     const { data, error } = await dbClient.from("pipeline_runs").insert([withOrg(orgId, runData)]).select();
     if (error) throw dbError("create pipeline run", error);
-    return data?.[0];
-  },
-
-  /** The run id comes from createPipelineRun in the same request. */
-  async updatePipelineRun(runId: string, updates: Record<string, any>) {
-    const { data, error } = await dbClient.from("pipeline_runs").update(updates).eq("id", runId).select();
-    if (error) throw dbError("update pipeline run", error);
     return data?.[0];
   },
 

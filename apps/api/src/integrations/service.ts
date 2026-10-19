@@ -11,6 +11,9 @@ import {
   type IntegrationProvider,
 } from "./credentials";
 import { checkProvider, type ProviderCheckResult } from "./providers";
+import { logger } from "../logger";
+
+const log = logger.child({ module: "integrations" });
 
 export interface IntegrationFieldDto {
   key: string;
@@ -29,7 +32,7 @@ export interface IntegrationDto {
   description: string;
   category: string;
   status: IntegrationStatus;
-  /** "vault" = saved for this workspace, "env" = server environment fallback. */
+  /** "vault" = saved for this workspace, "env" = platform-managed server credentials (values are never returned). */
   source: CredentialSource | null;
   lastCheckedAt: string | null;
   lastError: string | null;
@@ -68,7 +71,8 @@ function toDto(
     lastError: checked?.status === "error" ? checked.last_error : null,
     updatedAt: row?.updated_at ?? null,
     fields: spec.fields.map((f) => {
-      const value = resolved?.values[f.key];
+      // Platform-managed (env) values belong to the server operator, not the workspace.
+      const value = resolved?.source === "vault" ? resolved.values[f.key] : undefined;
       return {
         key: f.key,
         label: f.label,
@@ -187,7 +191,7 @@ export async function runHealthChecks(options: { orgId?: string | null; provider
         await recordCheck(orgId, provider, result);
         checked++;
       } catch (err: any) {
-        console.error(`[Integrations] Health check ${provider} for org ${orgId} failed: ${err?.message || err}`);
+        log.error("Health check failed", { orgId, provider, err });
       }
     }
   }
@@ -199,7 +203,7 @@ registerJobHandler(
   async (payload, ctx) => {
     const provider = payload.provider && payload.provider in PROVIDER_SPECS ? (payload.provider as IntegrationProvider) : undefined;
     const checked = await runHealthChecks({ orgId: ctx.orgId, provider });
-    if (checked > 0) console.log(`[Integrations] Health check verified ${checked} integration(s).`);
+    if (checked > 0) log.info("Health check finished", { checked });
   },
   { backoffMs: () => 5 * 60 * 1000 }
 );
@@ -212,7 +216,7 @@ export function scheduleIntegrationHealthChecks(): void {
   const minutes = Math.max(5, Number(process.env.INTEGRATION_HEALTH_CHECK_MINUTES) || 60);
   const enqueue = () =>
     enqueueJob("integration.health_check", {}, { dedupeKey: HEALTH_CHECK_DEDUPE_KEY, maxAttempts: 2 }).catch((err) =>
-      console.error(`[Integrations] Could not schedule health check: ${err?.message || err}`)
+      log.error("Could not schedule health check", { err })
     );
   setTimeout(() => void enqueue(), 30_000).unref();
   healthTimer = setInterval(() => void enqueue(), minutes * 60 * 1000);

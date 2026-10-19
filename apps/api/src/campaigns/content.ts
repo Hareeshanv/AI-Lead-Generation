@@ -103,8 +103,15 @@ export function buildWhatsAppTemplate(template: StepWhatsAppTemplate, vars: Reco
 
 // ---- Unsubscribe links ----
 
+export const UNSUBSCRIBE_SECRET_MISSING =
+  "Email campaigns are disabled until the server sets CAMPAIGN_UNSUBSCRIBE_SECRET (used to sign unsubscribe links).";
+
+export function unsubscribeConfigured(): boolean {
+  return Boolean(process.env.CAMPAIGN_UNSUBSCRIBE_SECRET);
+}
+
 function unsubscribeSecret(): string {
-  const secret = process.env.CAMPAIGN_UNSUBSCRIBE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const secret = process.env.CAMPAIGN_UNSUBSCRIBE_SECRET || "";
   if (!secret) throw new Error("Set CAMPAIGN_UNSUBSCRIBE_SECRET to sign unsubscribe links.");
   return secret;
 }

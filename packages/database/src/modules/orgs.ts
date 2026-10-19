@@ -48,6 +48,14 @@ export interface InvitationRow {
   created_at: string;
 }
 
+export interface PendingInviteRow {
+  org_id: string;
+  org_name: string;
+  role: OrgRole;
+  invitation: InvitationRow;
+  created_at: string;
+}
+
 const one = <T>(value: T | T[] | null | undefined): T | null => (Array.isArray(value) ? value[0] ?? null : value ?? null);
 
 export const orgsDb = {
@@ -68,19 +76,69 @@ export const orgsDb = {
     orgId: string,
     userId: string,
     options: { includePending?: boolean } = {}
-  ): Promise<{ role: OrgRole; status: MemberStatus; invitation_id: string | null } | null> {
-    let query = dbClient.from("org_members").select("role, status, invitation_id").eq("org_id", orgId).eq("user_id", userId);
+  ): Promise<{ role: OrgRole; status: MemberStatus; invitation_id: string | null; requires_acceptance: boolean } | null> {
+    let query = dbClient
+      .from("org_members")
+      .select("role, status, invitation_id, requires_acceptance")
+      .eq("org_id", orgId)
+      .eq("user_id", userId);
     if (!options.includePending) query = query.eq("status", "active");
     const { data, error } = await query.maybeSingle();
     if (error) throw dbError("get membership", error);
-    return data as { role: OrgRole; status: MemberStatus; invitation_id: string | null } | null;
+    return data as { role: OrgRole; status: MemberStatus; invitation_id: string | null; requires_acceptance: boolean } | null;
   },
 
-  /** Activates the user's pending memberships (accepting their invitations); returns the orgs joined. */
-  async acceptPendingMemberships(userId: string): Promise<{ org_id: string; role: OrgRole }[]> {
-    const { data, error } = await dbClient.rpc("accept_pending_memberships", { p_user: userId });
+  /**
+   * Activates pending memberships (accepting their invitations); returns the orgs joined.
+   * Without orgId only memberships that do not need explicit acceptance are activated.
+   */
+  async acceptPendingMemberships(userId: string, orgId?: string): Promise<{ org_id: string; role: OrgRole }[]> {
+    const { data, error } = await dbClient.rpc("accept_pending_memberships", {
+      p_user: userId,
+      ...(orgId ? { p_org_id: orgId } : {}),
+    });
     if (error) throw dbError("accept pending memberships", error);
     return (data || []) as { org_id: string; role: OrgRole }[];
+  },
+
+  /** Invitations to an existing account waiting for that user's decision (not expired or revoked). */
+  async listPendingInvitesForUser(userId: string): Promise<PendingInviteRow[]> {
+    const { data: rows, error } = await dbClient
+      .from("org_members")
+      .select("org_id, role, invitation_id, created_at, organizations(id, name)")
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .eq("requires_acceptance", true)
+      .order("created_at", { ascending: false });
+    if (error) throw dbError("list pending invites", error);
+    const invitationIds = (rows || []).map((r: any) => r.invitation_id).filter(Boolean) as string[];
+    const invitations = new Map<string, InvitationRow>();
+    if (invitationIds.length > 0) {
+      const { data, error: invError } = await dbClient.from("invitations").select("*").in("id", invitationIds);
+      if (invError) throw dbError("list pending invites", invError);
+      for (const inv of (data || []) as InvitationRow[]) invitations.set(inv.id, inv);
+    }
+    const now = Date.now();
+    return (rows || []).flatMap((r: any) => {
+      const invitation = r.invitation_id ? invitations.get(r.invitation_id) : undefined;
+      if (!invitation || invitation.status !== "pending" || Date.parse(invitation.expires_at) <= now) return [];
+      const org = one(r.organizations) as { id: string; name: string } | null;
+      return [{ org_id: r.org_id, org_name: org?.name ?? "Workspace", role: r.role, invitation, created_at: r.created_at }];
+    });
+  },
+
+  /** Deletes the user's own pending membership (declining the invite); returns its invitation id. */
+  async declinePendingMembership(userId: string, orgId: string): Promise<{ invitation_id: string | null } | null> {
+    const { data, error } = await dbClient
+      .from("org_members")
+      .delete()
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .select("invitation_id")
+      .maybeSingle();
+    if (error) throw dbError("decline invitation", error);
+    return data as { invitation_id: string | null } | null;
   },
 
   /** Creates the org, its settings row and an admin membership (SECURITY DEFINER RPC). */
@@ -160,12 +218,26 @@ export const orgsDb = {
         user_id: userId,
         role,
         status: "active",
+        requires_acceptance: false,
         accepted_at: new Date().toISOString(),
         ...(invitationId ? { invitation_id: invitationId } : {}),
       },
       { onConflict: "org_id,user_id" }
     );
     if (error) throw dbError("add member", error);
+  },
+
+  /** Pending membership for an existing account; it only becomes active when the user accepts. */
+  async addPendingMember(orgId: string, userId: string, role: OrgRole, invitationId: string) {
+    const { error } = await dbClient.from("org_members").insert({
+      org_id: orgId,
+      user_id: userId,
+      role,
+      status: "pending",
+      requires_acceptance: true,
+      invitation_id: invitationId,
+    });
+    if (error) throw dbError("add pending member", error);
   },
 
   /** Removes pending memberships created from an invitation (when it is revoked). */

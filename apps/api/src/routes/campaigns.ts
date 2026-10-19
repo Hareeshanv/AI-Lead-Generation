@@ -35,6 +35,8 @@ export const campaignsRouter = createRouter();
 
 const manager = requireRole("manager");
 const launchLimit = rateLimit({ name: "campaign-launch", windowMs: 60_000, max: 10 });
+/** The wizard re-previews as filters change (debounced), so this allows steady editing. */
+const previewLimit = rateLimit({ name: "audience-preview", windowMs: 60_000, max: 60 });
 
 const STATUSES = ["draft", "scheduled", "active", "paused", "completed"] as const;
 const RECIPIENT_STATUSES = ["pending", "active", "completed", "replied", "bounced", "unsubscribed", "failed", "skipped"] as const;
@@ -112,7 +114,7 @@ campaignsRouter.get("/", async (req, res) => {
 });
 
 // POST /api/campaigns/audience/preview { channel, audienceFilter, campaignId? }
-campaignsRouter.post("/audience/preview", async (req, res) => {
+campaignsRouter.post("/audience/preview", previewLimit, async (req, res) => {
   const { orgId } = getCtx(req);
   const body = parse(previewSchema, req.body);
   if (body.campaignId) await loadCampaign(orgId, body.campaignId);
@@ -221,7 +223,7 @@ campaignsRouter.put("/:id/steps", manager, async (req, res) => {
 });
 
 // GET /api/campaigns/:id/audience/preview (saved filter + leads added manually)
-campaignsRouter.get("/:id/audience/preview", async (req, res) => {
+campaignsRouter.get("/:id/audience/preview", previewLimit, async (req, res) => {
   const { orgId } = getCtx(req);
   const campaign = await loadCampaign(orgId, req.params.id);
   const filter = audienceFilterSchema.safeParse(campaign.audience_filter ?? {});

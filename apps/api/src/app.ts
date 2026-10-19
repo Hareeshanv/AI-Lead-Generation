@@ -3,6 +3,7 @@ import cors from "cors";
 import { routeModules } from "./routes";
 import { requireAuth } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./http/errors";
+import { configuredOrigins, isAllowedOrigin } from "./http/origins";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -14,24 +15,15 @@ declare global {
   }
 }
 
-/** WEB_APP_URL may list several origins separated by commas. */
-function allowedOrigins(): string[] {
-  return (process.env.WEB_APP_URL || "http://localhost:3000")
-    .split(",")
-    .map((o) => o.trim().replace(/\/+$/, ""))
-    .filter(Boolean);
-}
-
 export const app = express();
 
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
-const origins = allowedOrigins();
+const origins = configuredOrigins();
 app.use(
   cors({
-    // Requests without an Origin (server-to-server webhooks, curl) are not CORS requests.
-    origin: (origin, callback) => callback(null, !origin || origins.includes(origin.replace(/\/+$/, ""))),
+    origin: (origin, callback) => callback(null, isAllowedOrigin(origin, origins)),
     allowedHeaders: ["Authorization", "Content-Type", "x-org-id"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     maxAge: 600,

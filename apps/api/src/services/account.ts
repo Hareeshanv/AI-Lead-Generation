@@ -4,8 +4,10 @@ import {
   type InvitationRow,
   type MemberRow,
   type OrgSettingsRow,
+  type PendingInviteRow,
   type ProfileRow,
 } from "@ai-lead-gen/database";
+import { normalizeDiscoverySettings } from "../../../../services/search/vocabulary";
 
 export function webAppUrl(): string {
   return (process.env.WEB_APP_URL || "http://localhost:3000").split(",")[0].trim().replace(/\/+$/, "");
@@ -64,20 +66,35 @@ export function toSettingsDto(settings: OrgSettingsRow) {
     scoring: settings.scoring,
     defaultOwnerId: settings.default_owner_id,
     branding: settings.branding ?? {},
+    discovery: normalizeDiscoverySettings(settings.discovery),
     updatedAt: settings.updated_at,
   };
 }
 
 export function toMemberDto(member: MemberRow) {
+  const status = member.status ?? "active";
+  // A pending invitee's profile details would reveal that the email already had an account.
+  const profile = status === "active" ? member.profile : null;
   return {
     userId: member.user_id,
     role: member.role,
-    status: member.status ?? "active",
+    status,
     invitationId: member.invitation_id ?? null,
     joinedAt: member.created_at,
     email: member.profile?.email ?? null,
-    fullName: member.profile?.full_name ?? null,
-    avatarUrl: member.profile?.avatar_url ?? null,
+    fullName: profile?.full_name ?? null,
+    avatarUrl: profile?.avatar_url ?? null,
+  };
+}
+
+export function toPendingInviteDto(invite: PendingInviteRow) {
+  return {
+    invitationId: invite.invitation.id,
+    orgId: invite.org_id,
+    orgName: invite.org_name,
+    role: invite.role,
+    expiresAt: invite.invitation.expires_at,
+    createdAt: invite.created_at,
   };
 }
 

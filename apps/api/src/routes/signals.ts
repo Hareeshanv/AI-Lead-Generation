@@ -7,13 +7,16 @@ import { HttpError } from "../http/errors";
 import { parse, parseId, uuidParam } from "../http/validate";
 import { send } from "../http/pagination";
 import { getCtx, requireRole } from "../middleware/auth";
-import { convertSignalsToLeads } from "../agents/discovery";
+import { rateLimit } from "../http/rateLimit";
+import { convertSignalsToLeads, workspaceVocabulary } from "../agents/discovery";
 
 /** Mounted at /api/signals behind requireAuth(). */
 export const signalsRouter = createRouter();
 
+const importLimit = rateLimit({ name: "signal-import", windowMs: 60_000, max: 10 });
+
 // POST /api/signals/import — Sarvam agent JSON ({signals}/{leads} or raw array), upserted on (org, post_url)
-signalsRouter.post("/import", requireRole("manager"), async (req, res) => {
+signalsRouter.post("/import", requireRole("manager"), importLimit, async (req, res) => {
   const { orgId } = getCtx(req);
   const { rows, skipped, reasons } = prepareSignalImport(req.body);
   if (rows.length === 0) {
@@ -28,15 +31,16 @@ signalsRouter.post("/import", requireRole("manager"), async (req, res) => {
 // GET /api/signals?course=&city=&status=
 signalsRouter.get("/", async (req, res) => {
   const { orgId } = getCtx(req);
-  const course = canonicalCourse(req.query.course);
-  const city = canonicalCity(req.query.city);
   const status = typeof req.query.status === "string" && req.query.status ? req.query.status : null;
   if (status && !isSignalStatus(status)) {
     throw HttpError.badRequest(`status must be one of ${SIGNAL_STATUSES.join(", ")}`);
   }
+  const vocab = await workspaceVocabulary(orgId);
+  const course = canonicalCourse(req.query.course, vocab);
+  const city = canonicalCity(req.query.city, vocab);
   const signals = await dbQueries.searchIntentSignals(orgId, {
-    coursePatterns: course ? coursePatterns(course) : [],
-    cityAliases: city ? cityAliases(city) : [],
+    coursePatterns: course ? coursePatterns(course, vocab) : [],
+    cityAliases: city ? cityAliases(city, vocab) : [],
     status,
   });
   res.json({ success: true, signals });
@@ -75,7 +79,7 @@ signalsRouter.patch("/:id", async (req, res) => {
 });
 
 // DELETE /api/signals/:id — hard delete (opt-out / erasure requests)
-signalsRouter.delete("/:id", async (req, res) => {
+signalsRouter.delete("/:id", requireRole("manager"), async (req, res) => {
   const { orgId } = getCtx(req);
   const deleted = await dbQueries.deleteIntentSignal(orgId, parseId(req.params.id, "signal id"));
   if (!deleted) throw HttpError.notFound("Signal");
