@@ -1,8 +1,8 @@
-import { dbQueries, dbClient } from "../packages/database/src";
+import { dbClient } from "@ai-lead-gen/database";
 
 async function testSupabaseConnection() {
   console.log("🔍 Testing Supabase Database Connection...");
-  console.log("URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+  console.log("URL:", process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL);
 
   try {
     const { data: agents, error } = await dbClient.from("agents").select("*");

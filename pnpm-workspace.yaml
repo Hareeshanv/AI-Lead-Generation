@@ -6,3 +6,4 @@ packages:
   - "services/*"
   - "jobs/*"
   - "integrations/*"
+  - "tests"

@@ -13,8 +13,9 @@
       "cache": false,
       "persistent": true
     },
+    "typecheck": {},
     "test": {
-      "dependsOn": ["^build"]
+      "cache": false
     },
     "clean": {
       "cache": false
