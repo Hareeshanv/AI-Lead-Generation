@@ -5,7 +5,9 @@
  * chat completions endpoint (POST {base}/v1/chat/completions). The agent's
  * JSON input is sent as the user message and the model's reply is parsed as JSON.
  *
- * Uses native fetch (Node 18+) — no external dependencies required.
+ * Uses native fetch (Node 18+) unless the caller supplies a transport. A workspace-supplied base URL
+ * other than the official API must come with an SSRF-safe transport (the API passes one built on
+ * apps/api/src/integrations/safeHttp.ts); otherwise the call is refused.
  */
 
 export interface SarvamAgentRequest {
@@ -15,15 +17,79 @@ export interface SarvamAgentRequest {
   metadata?: Record<string, any>;
   /** Per-attempt HTTP timeout; defaults to 60s. */
   timeoutMs?: number;
+  /** Attempts for network errors, timeouts, 429 and 5xx (exponential backoff); defaults to 3. */
+  maxAttempts?: number;
   /** Workspace credentials; each missing value falls back to the SARVAM_* env vars. */
   config?: SarvamConfig;
+}
+
+export interface SarvamHttpRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  timeoutMs: number;
+}
+
+export interface SarvamHttpResponse {
+  status: number;
+  body: string;
+}
+
+/** POSTs the request; throws SarvamTransportError (or UnsafeUrlError) when no HTTP response arrives. */
+export type SarvamTransport = (request: SarvamHttpRequest) => Promise<SarvamHttpResponse>;
+
+export class SarvamTransportError extends Error {
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "SarvamTransportError";
+  }
 }
 
 export interface SarvamConfig {
   apiKey?: string | null;
   baseUrl?: string | null;
   model?: string | null;
+  transport?: SarvamTransport | null;
 }
+
+export const SARVAM_DEFAULT_BASE_URL = "https://api.sarvam.ai";
+const DEFAULT_MAX_ATTEMPTS = 3;
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+/** Base URL without trailing slash or trailing /v1 (older configs used https://api.sarvam.ai/v1). */
+export function normalizeBaseUrl(raw: string): string {
+  return raw.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+export function isOfficialBaseUrl(raw: string): boolean {
+  try {
+    const url = new URL(normalizeBaseUrl(raw));
+    return url.protocol === "https:" && url.hostname.toLowerCase() === new URL(SARVAM_DEFAULT_BASE_URL).hostname && !url.port;
+  } catch {
+    return false;
+  }
+}
+
+/** User-facing message for a failed HTTP status; the upstream body is only logged server-side. */
+export function sarvamHttpError(status: number): string {
+  if (status === 401 || status === 403) return "Sarvam rejected the API key (check it under Integrations)";
+  if (status === 404) return "Sarvam endpoint not found (check the base URL under Integrations)";
+  if (status === 400 || status === 422) return "Sarvam rejected the request (check the model name under Integrations)";
+  if (status === 429) return "Sarvam rate limit reached; try again later";
+  if (status >= 500) return `Sarvam is unavailable (HTTP ${status}); try again later`;
+  return `Sarvam request failed (HTTP ${status})`;
+}
+
+export const fetchTransport: SarvamTransport = async ({ url, headers, body, timeoutMs }) => {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err: any) {
+    const reason = err?.name === "TimeoutError" ? `timed out after ${Math.round(timeoutMs / 1000)}s` : err?.message || "network error";
+    throw new SarvamTransportError(reason, true);
+  }
+  return { status: res.status, body: await res.text().catch(() => "") };
+};
 
 export interface SarvamAgentResponse {
   success: boolean;
@@ -44,22 +110,22 @@ export interface SarvamAgentStatusResponse {
   model: string;
 }
 
-const QUERY_PARSER_PROMPT = `You are the Query Parser agent of a lead search system for Indian coaching institutes and training academies.
-The user message is JSON {"query": "<free text>"} describing which EXISTING leads to show from our own database (for example "NEET students in Bengaluru" or "Java Bangalore").
+const QUERY_PARSER_PROMPT = `You are the Query Parser agent of a lead search system.
+The user message is JSON {"query": "<free text>", "business": string|null, "known_interests": string[]}. "query" describes which EXISTING leads to show from our own database (for example "NEET students in Bengaluru", "root canal enquiries in Pune" or "hot leads from Instagram"). "business" (optional) says what the business sells and "known_interests" lists the product, service or course names it uses.
 Convert the query into search filters. Do NOT name, invent or look up any people, companies, phone numbers or emails.
 Respond with ONLY a JSON object (no markdown, no commentary) with exactly these keys:
-- "course_interest": course or exam the lead wants, using short canonical names such as "NEET", "JEE", "Java", "Python", "Full Stack", "Software Testing", "Data Science", "SAP"; or null
+- "course_interest": the product, service, course or exam the lead wants, using the matching name from known_interests when one fits, otherwise a short canonical name; or null
 - "city": city name, preferring official spellings ("Bengaluru" not "Bangalore", "Mysuru" not "Mysore"); or null
-- "exam_year": four-digit year such as "2027" if the query mentions one; or null
+- "exam_year": four-digit target year (exam, intake or purchase year) such as "2027" if the query mentions one; or null
 - "source_platform": "meta" for Facebook/Instagram/Meta ads, "google" for Google Ads; or null
 - "status": "Hot", "Warm" or "Cold" if the query asks for that lead temperature; or null
 - "min_score": minimum lead score 0-100 if the query asks for one; or null
 - "keywords": array of other meaningful words from the query (lowercase, no filler words like "students", "in", "show"); may be empty
 Use null for anything the query does not state. Never guess a city or year that is not in the query.`;
 
-const DISCOVERY_PROMPT = `You are the Lead Discovery agent for an Indian business.
-The user message is JSON {"query": string, "city": string, "city_aliases": string[], "results": [{"index": number, "platform": string, "url": string, "title": string, "snippet": string, "date": string|null}]}.
-"query" is the product, service or course the business offers (any niche: coaching, dental care, interior design, software, etc.). Each result is a public web search hit (Reddit, Quora, LinkedIn, YouTube, Instagram, Facebook or another site). Judge each one ONLY from its title and snippet.
+const DISCOVERY_PROMPT = `You are the Lead Discovery agent for a business.
+The user message is JSON {"query": string, "city": string, "city_aliases": string[], "business": string|null, "country": string, "results": [{"index": number, "platform": string, "url": string, "title": string, "snippet": string, "date": string|null}]}.
+"query" is the product, service or course the business offers (any niche: coaching, dental care, interior design, software, etc.). "business" (optional) describes the business and "country" is its market (ISO country code). "city" may be empty when no location was given. Each result is a public web search hit (Reddit, Quora, LinkedIn, YouTube, Instagram, Facebook or another site). Judge each one ONLY from its title and snippet.
 Keep only prospective customers: a person (or a parent/guardian on someone's behalf, or a small business owner) who wants this product/service, ideally in or near the city.
 Set is_prospective_customer to false for: businesses, institutes, agencies, clinics, sellers or their staff promoting themselves; ads, listings, directories, blogs and review sites; recruiters and job postings; news articles; and posts unrelated to wanting the query.
 Respond with ONLY a JSON object (no markdown, no commentary): {"results": [{"index": number, "is_prospective_customer": boolean, "author_handle": string|null, "interest": string|null, "location_match": "exact"|"nearby"|"state"|null, "intent_score": number, "urgency": "high"|"medium"|"low", "lead_routing_category": "hot"|"warm"|"nurture"|"guardian_consent_needed", "contact_requested": boolean, "is_minor": boolean, "suggested_public_reply": string|null}]}
@@ -67,21 +133,21 @@ Rules:
 - Return one entry for every input index.
 - author_handle: the public username or display name visible in the title or snippet (for example "u/rahul_k" or "Priya Sharma"); null if none is shown. Never invent one.
 - interest: short name of what they want (for example "Java course", "root canal", "modular kitchen").
-- location_match: "exact" if the post names the city or one of city_aliases, "nearby" if it names a nearby town or area of that city, "state" if it only names the state; null if no location is mentioned.
+- location_match: "exact" if the post names the city or one of city_aliases, "nearby" if it names a nearby town or area of that city, "state" if it only names the state; null if no location is mentioned or city is empty.
 - intent_score 0-100: 80-100 deciding now (asking for prices, quotes, availability, which provider to pick, or asking to be contacted); 50-79 actively comparing options or asking for suggestions; 20-49 general curiosity; below 20 for anything else. urgency is "high" for 80+, "medium" for 50-79, "low" otherwise.
 - contact_requested: true only if the author explicitly asks to be contacted (for example "call me", "DM me", "send details", "whatsapp me", "interested please contact").
-- is_minor: true if the post suggests the learner is a minor (Class 11/12, 11th/12th, PU/PUC, "my son", "my daughter").
+- is_minor: true if the post suggests the person who needs the product or service is a minor (a school student, Class 11/12, 11th/12th, PU/PUC, "my son", "my daughter").
 - lead_routing_category: "guardian_consent_needed" when is_minor is true (even if they asked to be contacted); otherwise "hot" for 80+, "warm" for 50-79, "nurture" below 50.
 - suggested_public_reply: a short, genuinely helpful public reply (max 2 sentences) that answers their question. Do NOT name any business or brand, do NOT include links or websites, and NEVER ask for their phone number or email. null when is_prospective_customer is false.
 - NEVER output phone numbers or email addresses in any field, even if they appear in the input.`;
 
-const PLACE_SCORING_PROMPT = `You are the Business Lead Scoring agent of a B2B lead generation system in India.
-The user message is JSON {"query": string, "city": string, "businesses": [{"index": number, "name": string, "category": string|null, "address": string|null, "rating": number|null, "rating_count": number|null, "has_website": boolean, "has_phone": boolean}]}.
+const PLACE_SCORING_PROMPT = `You are the Business Lead Scoring agent of a B2B lead generation system.
+The user message is JSON {"query": string, "city": string, "country": string, "businesses": [{"index": number, "name": string, "category": string|null, "address": string|null, "rating": number|null, "rating_count": number|null, "has_website": boolean, "has_phone": boolean}]}.
 "query" describes the kind of business the user wants as leads (for example "dental clinics" or "interior designers"). Each business is a public Google Maps listing.
 Respond with ONLY a JSON object (no markdown, no commentary): {"results": [{"index": number, "is_relevant": boolean, "fit_score": number, "reason": string}]}
 Rules:
 - Return one entry for every input index.
-- is_relevant: true only if the business is the kind of business described by the query and is located in or near the city.
+- is_relevant: true only if the business is the kind of business described by the query and is located in or near the city (any location when city is empty).
 - fit_score 0-100: how good a sales lead it is, based only on the provided fields: relevance to the query, location, reachability (has_website, has_phone) and how established it looks (rating and rating_count). Below 20 when not relevant.
 - reason: max 140 characters, plain text.
 - Never invent facts, contacts or websites that are not in the input.`;
@@ -138,15 +204,25 @@ export function parseModelJson(raw: string): any {
   }
 }
 
+export interface SarvamClientOptions {
+  /** First retry delay; later retries double it. Default 1s. */
+  retryBaseMs?: number;
+}
+
 export class SarvamClient {
+  private readonly retryBaseMs: number;
+
+  constructor(options: SarvamClientOptions = {}) {
+    this.retryBaseMs = Math.max(0, options.retryBaseMs ?? 1_000);
+  }
+
   private get apiKey(): string {
     return (process.env.SARVAM_API_KEY || "").trim();
   }
 
   /** Base URL without trailing slash or trailing /v1 (older .env files used https://api.sarvam.ai/v1). */
   get baseURL(): string {
-    const raw = (process.env.SARVAM_API_BASE_URL || "https://api.sarvam.ai").trim();
-    return raw.replace(/\/+$/, "").replace(/\/v1$/i, "");
+    return normalizeBaseUrl(process.env.SARVAM_API_BASE_URL || SARVAM_DEFAULT_BASE_URL);
   }
 
   get model(): string {
@@ -170,10 +246,10 @@ export class SarvamClient {
     const startTime = Date.now();
 
     const apiKey = (request.config?.apiKey || this.apiKey).trim();
-    const baseURL = request.config?.baseUrl
-      ? request.config.baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "")
-      : this.baseURL;
+    const customBaseUrl = request.config?.baseUrl?.trim() ? normalizeBaseUrl(request.config.baseUrl) : null;
+    const baseURL = customBaseUrl ?? this.baseURL;
     const model = (request.config?.model || this.model).trim();
+    const transport = request.config?.transport ?? fetchTransport;
 
     const fail = (error: string, modelUsed = model): SarvamAgentResponse => ({
       success: false,
@@ -195,6 +271,10 @@ export class SarvamClient {
       return fail(`No Sarvam prompt is defined for agent ${request.agentId}`);
     }
 
+    if (customBaseUrl && !isOfficialBaseUrl(customBaseUrl) && !request.config?.transport) {
+      return fail("A custom Sarvam base URL can only be used through the server's safe HTTP client");
+    }
+
     const url = `${baseURL}/v1/chat/completions`;
     const body = JSON.stringify({
       model,
@@ -211,33 +291,34 @@ export class SarvamClient {
     };
 
     const timeoutMs = request.timeoutMs ?? 60_000;
+    const maxAttempts = Math.max(1, Math.floor(request.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
     let data: any;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      let res: Response;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) await this.sleep(this.backoffMs(attempt - 1));
+      const last = attempt === maxAttempts;
+
+      let res: SarvamHttpResponse;
       try {
-        res = await fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs) });
+        res = await transport({ url, headers, body, timeoutMs });
       } catch (err: any) {
-        const reason =
-          err?.name === "TimeoutError" ? `timed out after ${Math.round(timeoutMs / 1000)}s` : err?.message || "network error";
-        return fail(`Sarvam request failed: ${reason}`);
+        if (err?.name === "UnsafeUrlError") return fail(`Sarvam base URL is not allowed: ${err.message}`);
+        const retryable = err instanceof SarvamTransportError ? err.retryable : true;
+        if (retryable && !last) continue;
+        return fail(`Sarvam request failed: ${err?.message || "network error"}`);
       }
 
-      if (res.ok) {
+      if (res.status >= 200 && res.status < 300) {
         try {
-          data = await res.json();
+          data = JSON.parse(res.body);
         } catch {
           return fail("Sarvam returned a non-JSON HTTP response");
         }
         break;
       }
 
-      const errText = await res.text().catch(() => "");
-      const retryable = res.status === 429 || res.status === 502 || res.status === 503;
-      if (retryable && attempt === 1) {
-        await this.sleep(2_000);
-        continue;
-      }
-      return fail(`Sarvam API responded with HTTP ${res.status}: ${errText.slice(0, 300)}`);
+      if (RETRYABLE_STATUSES.has(res.status) && !last) continue;
+      console.warn(`[Sarvam] ${request.agentId}: HTTP ${res.status}: ${String(res.body || "").slice(0, 300)}`);
+      return fail(sarvamHttpError(res.status));
     }
 
     const content: string = data?.choices?.[0]?.message?.content ?? "";
@@ -291,7 +372,14 @@ export class SarvamClient {
     };
   }
 
+  /** retryBaseMs, 2x, 4x, ... plus up to 25% jitter. */
+  private backoffMs(retry: number): number {
+    const base = this.retryBaseMs * 2 ** (retry - 1);
+    return Math.round(base + Math.random() * base * 0.25);
+  }
+
   private sleep(ms: number): Promise<void> {
+    if (ms <= 0) return Promise.resolve();
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

@@ -12,7 +12,8 @@ import { agentsDb, dbQueries } from "@ai-lead-gen/database";
 import { sarvamClient, type SarvamConfig } from "../sarvam";
 import { redactContactDetails, type IntentSignalRow } from "../signals";
 import { canonicalCity, cityAliases, sanitizeFilterValue } from "../search/queryParser";
-import { buildQueries, platformFromUrl, searchPlaces, searchSerper, type SerperPlace } from "./serper";
+import { buildVocabulary, DEFAULT_DISCOVERY_SETTINGS, type DiscoverySettings } from "../search/vocabulary";
+import { buildQueries, placesQuery, platformFromUrl, searchPlaces, searchSerper, type SerperPlace } from "./serper";
 import {
   buildExistingKeySet,
   buildPlaceLeadRow,
@@ -51,12 +52,13 @@ const SARVAM_TIMEOUT_MS = 120_000;
 /** Most web results are dropped as non-customers, so more candidates than results are classified. */
 const MAX_WEB_CANDIDATES = 120;
 const MAX_PLACE_PAGES = 5;
-const HIGH_SCORE = 80;
+const SARVAM_MAX_ATTEMPTS = 2;
 
 export interface LeadDiscoveryParams {
   orgId: string;
   runId: string;
   query: string;
+  /** "" searches without a location. */
   location: string;
   sources: DiscoverySource[];
   /** Per source. */
@@ -64,6 +66,10 @@ export interface LeadDiscoveryParams {
   serperApiKey: string;
   sarvam: SarvamConfig;
   thresholds: ScoringThresholds;
+  /** Workspace business description, market country and search vocabulary. */
+  discovery?: DiscoverySettings;
+  /** Final lead score/status (workspace scoring rules) applied to each new lead row before it is saved. */
+  scoreRow?: (row: Record<string, any>) => Record<string, any>;
 }
 
 export interface LeadDiscoveryResult {
@@ -105,9 +111,14 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<LeadDiscoveryResult> {
   const { orgId, runId } = params;
   const start = Date.now();
+  const discovery = params.discovery ?? DEFAULT_DISCOVERY_SETTINGS;
+  const vocab = buildVocabulary(discovery);
+  const locale = { country: discovery.country, language: discovery.language };
   const query = sanitizeFilterValue(params.query);
-  const city = canonicalCity(params.location) || sanitizeFilterValue(params.location);
-  const aliases = cityAliases(city);
+  const city = canonicalCity(params.location, vocab) || sanitizeFilterValue(params.location);
+  const aliases = city ? cityAliases(city, vocab) : [];
+  const where = city ? ` in ${city}` : "";
+  const business = discovery.businessDescription;
   const now = new Date().toISOString();
   const errors: string[] = [];
   let tokensUsed = 0;
@@ -163,7 +174,7 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
     return value;
   }
 
-  await log("info", `Started: "${query}" in ${city} (sources: ${params.sources.join(", ")}, up to ${params.maxResults} per source)`);
+  await log("info", `Started: "${query}"${where} (sources: ${params.sources.join(", ")}, up to ${params.maxResults} per source)`);
 
   // ---- Web: public posts -> intent signals --------------------------------------------------
   let webSearched = 0;
@@ -171,9 +182,10 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
   if (params.sources.includes("web")) {
     const candidates =
       (await step(STEPS.webSearch, "Web search (Serper)", { query, city }, async () => {
-        const queries = buildQueries(query, city);
+        const queries = buildQueries(query, city, { country: discovery.country, vocab });
+        if (queries.length === 0) throw new Error("The search query has no usable words");
         const perQuery = params.maxResults > 50 ? 20 : 10;
-        const searches = await Promise.allSettled(queries.map((q) => searchSerper(params.serperApiKey, q.q, perQuery)));
+        const searches = await Promise.allSettled(queries.map((q) => searchSerper(params.serperApiKey, q.q, perQuery, locale)));
         const stepErrors: string[] = [];
         const lists: Candidate[][] = searches.map((s, i) => {
           if (s.status === "rejected") {
@@ -204,8 +216,11 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
               agentId: DISCOVERY_AGENT_ID,
               config: params.sarvam,
               timeoutMs: SARVAM_TIMEOUT_MS,
+              maxAttempts: SARVAM_MAX_ATTEMPTS,
               input: {
                 query,
+                business,
+                country: discovery.country,
                 city,
                 city_aliases: aliases,
                 results: batch.map((c, index) => ({
@@ -229,7 +244,7 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
                 ? response.output.leads
                 : [];
             if (items.length === 0) stepErrors.push(`Batch ${b + 1}/${batches.length}: Sarvam returned no classifications`);
-            return buildSignalRows(batch, items, { query, city, cityAliases: aliases, now });
+            return buildSignalRows(batch, items, { query, city, cityAliases: aliases, now, thresholds: params.thresholds });
           });
           if (stepErrors.length === batches.length) throw new Error(stepErrors[0]);
           errors.push(...stepErrors.map((e) => `Intent classification ${e}`));
@@ -258,12 +273,13 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
   if (params.sources.includes("places")) {
     const places =
       (await step(STEPS.placesSearch, "Places search (Serper)", { query, city }, async () => {
-        const q = `${query} in ${city}`;
+        const q = placesQuery(query, city);
+        if (!q) throw new Error("The search query has no usable words");
         const target = Math.min(params.maxResults * 2, MAX_PLACE_PAGES * 20);
         const found: SerperPlace[] = [];
         let pages = 0;
         for (let page = 1; page <= MAX_PLACE_PAGES && found.length < target; page++) {
-          const batch = await searchPlaces(params.serperApiKey, q, page);
+          const batch = await searchPlaces(params.serperApiKey, q, page, locale);
           pages++;
           const before = uniquePlaces(found).length;
           found.push(...batch);
@@ -285,8 +301,11 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
               agentId: "agt-place-scoring",
               config: params.sarvam,
               timeoutMs: SARVAM_TIMEOUT_MS,
+              maxAttempts: SARVAM_MAX_ATTEMPTS,
               input: {
                 query,
+                business,
+                country: discovery.country,
                 city,
                 businesses: batch.map((p, index) => ({
                   index,
@@ -334,8 +353,9 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
       let duplicates = 0;
       if (scoredPlaces.length > 0) {
         const existing = await agentsDb.listLeadContacts(orgId);
+        const scoreRow = params.scoreRow ?? ((row: Record<string, any>) => row);
         const rows = scoredPlaces.map(({ place, scored }) =>
-          buildPlaceLeadRow(place, scored, { runId, query, city, thresholds: params.thresholds, now })
+          scoreRow(buildPlaceLeadRow(place, scored, { runId, query, city, thresholds: params.thresholds, now }))
         );
         const { fresh, duplicates: dupes } = dedupeLeadCandidates(rows, buildExistingKeySet(existing));
         const result = await agentsDb.insertLeads(orgId, fresh.slice(0, params.maxResults));
@@ -360,8 +380,8 @@ export async function runLeadDiscovery(params: LeadDiscoveryParams): Promise<Lea
 
   const leadsCreated = saved.inserted.length;
   const highScore =
-    saved.inserted.filter((l) => Number(l.score ?? 0) >= HIGH_SCORE).length +
-    signals.filter((s) => Number(s.intent_score ?? 0) >= HIGH_SCORE).length;
+    saved.inserted.filter((l) => Number(l.score ?? 0) >= params.thresholds.hot).length +
+    signals.filter((s) => Number(s.intent_score ?? 0) >= params.thresholds.hot).length;
   const nothingSearched = webSearched === 0 && placesSearched === 0;
   const status: LeadDiscoveryResult["status"] =
     nothingSearched && errors.length > 0 ? "failed" : errors.length > 0 ? "completed_with_errors" : "completed";

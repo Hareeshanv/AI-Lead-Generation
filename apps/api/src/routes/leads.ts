@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { activitiesDb, dbQueries, leadsDb, tasksDb, type LeadListFilters, type LeadRow } from "@ai-lead-gen/database";
-import { runLeadSearch, LeadSearchError } from "../../../../services/search/leadSearch";
+import { runFilteredLeadSearch, runLeadSearch, LeadSearchError } from "../../../../services/search/leadSearch";
+import { discoveryWorkspaceSettings, workspaceSarvamConfig } from "../agents/discovery";
 import { createRouter } from "../http/router";
 import { HttpError } from "../http/errors";
 import { parsePagination, send, sendPage } from "../http/pagination";
 import { parse, parseId, queryList } from "../http/validate";
 import { getCtx, hasRole, requireRole } from "../middleware/auth";
+import { rateLimit } from "../http/rateLimit";
+import { logger } from "../logger";
 import { PermanentJobError, registerJobHandler } from "../jobs/registry";
 import { events } from "../events";
 import { LEAD_STATUSES } from "../services/crm/pipeline";
@@ -19,6 +22,7 @@ import {
   recordStatusChange,
   rescoreAllLeads,
   rescoreLead,
+  rescoreLeads,
   scoredFields,
   toLeadDto,
 } from "../services/leads/service";
@@ -29,6 +33,8 @@ export const leadsRouter = createRouter();
 
 const MAX_BULK = 500;
 const MAX_IMPORT_ROWS = 2000;
+/** Each search can call the LLM query parser, so it is capped per workspace. */
+const searchLimit = rateLimit({ name: "lead-search", windowMs: 60_000, max: 30 });
 
 const statusSchema = z.enum(LEAD_STATUSES);
 
@@ -139,12 +145,39 @@ async function getLeadOr404(orgId: string, id: string): Promise<LeadRow> {
   return lead;
 }
 
-// POST /api/leads/search — natural-language query -> filters -> stored leads + intent signals
-leadsRouter.post("/search", async (req, res) => {
+/** Filters returned by an earlier search; normalized again server-side before use. */
+const searchFiltersSchema = z.object({
+  course_interest: z.string().max(200).nullish(),
+  city: z.string().max(200).nullish(),
+  exam_year: z.string().max(10).nullish(),
+  source_platform: z.string().max(50).nullish(),
+  status: z.string().max(50).nullish(),
+  min_score: z.number().min(0).max(100).nullish(),
+  keywords: z.array(z.string().max(100)).max(10).default([]),
+});
+
+const searchSchema = z
+  .object({
+    query: z.string().trim().min(1, "Enter a search query").max(500).optional(),
+    filters: searchFiltersSchema.optional(),
+  })
+  .refine((body) => body.query !== undefined || body.filters !== undefined, { message: "Enter a search query", path: ["query"] });
+
+// POST /api/leads/search — { query }: natural-language query -> filters -> stored leads + intent signals
+// { filters }: re-run with structured filters from an earlier search (no query parsing)
+leadsRouter.post("/search", searchLimit, async (req, res) => {
   const { orgId } = getCtx(req);
-  const { query } = parse(z.object({ query: z.string().trim().min(1, "Enter a search query").max(500) }), req.body);
+  const { query, filters: structuredFilters } = parse(searchSchema, req.body);
   try {
-    const { filters, parsedBy, leads, signals, warnings } = await runLeadSearch(orgId, query);
+    let result;
+    if (structuredFilters) {
+      const { discovery } = await discoveryWorkspaceSettings(orgId);
+      result = await runFilteredLeadSearch(orgId, structuredFilters, { discovery });
+    } else {
+      const [{ discovery }, sarvam] = await Promise.all([discoveryWorkspaceSettings(orgId), workspaceSarvamConfig(orgId)]);
+      result = await runLeadSearch(orgId, query!, { discovery, sarvam });
+    }
+    const { filters, parsedBy, leads, signals, warnings } = result;
     send(res, { filters, parsedBy, leads, signals, warnings });
   } catch (err: any) {
     if (err instanceof LeadSearchError) {
@@ -154,11 +187,10 @@ leadsRouter.post("/search", async (req, res) => {
   }
 });
 
-// GET /api/leads?page&pageSize&sort&q&status&source&sourcePlatform&ownerId&minScore&maxScore&createdFrom&createdTo&tags&...
-leadsRouter.get("/", async (req, res) => {
-  const { orgId, userId } = getCtx(req);
-  const pagination = parsePagination(req.query, { sortable: SORTABLE, defaultSort: "-createdAt" });
-  const query = parse(listQuerySchema, req.query);
+/** Pagination, sort and filters of GET /api/leads from a query string; also used by the CSV export. */
+export function parseLeadListQuery(rawQuery: unknown, userId: string) {
+  const pagination = parsePagination(rawQuery, { sortable: SORTABLE, defaultSort: "-createdAt" });
+  const query = parse(listQuerySchema, rawQuery);
   const filters: LeadListFilters = {
     q: pagination.q,
     status: query.status,
@@ -174,6 +206,13 @@ leadsRouter.get("/", async (req, res) => {
     courseInterest: query.courseInterest,
     examYear: query.examYear,
   };
+  return { pagination, filters };
+}
+
+// GET /api/leads?page&pageSize&sort&q&status&source&sourcePlatform&ownerId&minScore&maxScore&createdFrom&createdTo&tags&...
+leadsRouter.get("/", async (req, res) => {
+  const { orgId, userId } = getCtx(req);
+  const { pagination, filters } = parseLeadListQuery(req.query, userId);
   const { rows, total } = await leadsDb.list(orgId, filters, pagination);
   sendPage(res, rows.map(toLeadDto), total, pagination);
 });
@@ -298,22 +337,10 @@ leadsRouter.post("/bulk", async (req, res) => {
     updated = await leadsDb.updateMany(orgId, ids, { status: body.status });
   } else if (body.action === "tag" || body.action === "untag") {
     keys = ["tags"];
-    const tags = body.tags;
-    for (const lead of before) {
-      const current: string[] = Array.isArray(lead.tags) ? lead.tags : [];
-      const next =
-        body.action === "tag" ? Array.from(new Set([...current, ...tags])) : current.filter((t) => !tags.includes(t));
-      if (next.length === current.length && next.every((t, i) => t === current[i])) continue;
-      const row = await leadsDb.update(orgId, lead.id, { tags: next });
-      if (row) updated.push(row);
-    }
+    updated = await leadsDb.updateTags(orgId, ids, body.action === "tag" ? { add: body.tags } : { remove: body.tags });
   } else {
-    const thresholds = await loadThresholds(orgId);
-    for (const lead of before) {
-      const row = await rescoreLead(orgId, lead.id, userId, thresholds);
-      if (row && (row.score !== lead.score || row.status !== lead.status)) updated.push(row);
-    }
-    return send(res, { affected: updated.length });
+    const rescored = await rescoreLeads(orgId, before, userId, await loadThresholds(orgId));
+    return send(res, { affected: rescored.length });
   }
 
   const beforeById = new Map(before.map((l) => [l.id, l]));
@@ -440,5 +467,5 @@ registerJobHandler("lead.ingested", async ({ leadId }, { orgId }) => {
 events.on("settings.updated", async ({ orgId, changes }) => {
   if (!changes.includes("scoring")) return;
   const changed = await rescoreAllLeads(orgId);
-  if (changed > 0) console.log(`[Leads] Rescored ${changed} lead(s) after scoring thresholds changed.`);
+  if (changed > 0) logger.info("Rescored leads after scoring thresholds changed", { module: "leads", orgId, changed });
 });

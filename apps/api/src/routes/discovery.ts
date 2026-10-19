@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { dbQueries } from "@ai-lead-gen/database";
 import { cityAliases, canonicalCity, coursePatterns, sanitizeFilterValue } from "../../../../services/search/queryParser";
-import { agentRunLimit, startDiscoveryRun } from "../agents/discovery";
+import { agentRunLimit, startDiscoveryRun, workspaceVocabulary } from "../agents/discovery";
 import { createRouter } from "../http/router";
 import { send } from "../http/pagination";
 import { parse } from "../http/validate";
@@ -28,11 +28,12 @@ const resultsQuery = z.object({
 discoveryRouter.get("/results", async (req, res) => {
   const { orgId } = getCtx(req);
   const { query, location, limit } = parse(resultsQuery, req.query);
+  const vocab = await workspaceVocabulary(orgId);
   const q = query ? sanitizeFilterValue(query) : "";
-  const city = location ? canonicalCity(location) || sanitizeFilterValue(location) : "";
+  const city = location ? canonicalCity(location, vocab) || sanitizeFilterValue(location) : "";
   const signals = await dbQueries.searchIntentSignals(orgId, {
-    coursePatterns: q ? coursePatterns(q) : [],
-    cityAliases: city ? cityAliases(city) : [],
+    coursePatterns: q ? coursePatterns(q, vocab) : [],
+    cityAliases: city ? cityAliases(city, vocab) : [],
     orderBy: "newest",
     limit,
   });

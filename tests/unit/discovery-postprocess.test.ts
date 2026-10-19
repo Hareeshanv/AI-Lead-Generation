@@ -201,6 +201,14 @@ describe("scoreBand", () => {
     expect(scoreBand(50)).toEqual({ urgency: "medium", routing: "warm" });
     expect(scoreBand(49)).toEqual({ urgency: "low", routing: "nurture" });
   });
+
+  it("uses workspace thresholds", () => {
+    const t = { hot: 70, warm: 40 };
+    expect(scoreBand(70, t)).toEqual({ urgency: "high", routing: "hot" });
+    expect(scoreBand(69, t)).toEqual({ urgency: "medium", routing: "warm" });
+    expect(scoreBand(40, t)).toEqual({ urgency: "medium", routing: "warm" });
+    expect(scoreBand(39, t)).toEqual({ urgency: "low", routing: "nurture" });
+  });
 });
 
 describe("byPriority / selectRows", () => {
@@ -371,6 +379,32 @@ describe("buildSignalRows", () => {
     expect(buildSignalRows([], items, ctx)).toEqual([]);
     expect(buildSignalRows(batch, [], ctx)).toEqual([]);
   });
+
+  it("bands and raises contact requests with workspace thresholds", () => {
+    const custom = buildSignalRows(batch, items, { ...ctx, thresholds: { hot: 60, warm: 30 } });
+    expect(custom[0]).toMatchObject({ intent_score: 65, urgency: "high", lead_routing_category: "hot" });
+    expect(custom[1]).toMatchObject({ intent_score: 60, urgency: "high", lead_routing_category: "hot", contact_requested: true });
+  });
+
+  it("matches non-Latin city aliases as whole words only", () => {
+    const hindi = { ...ctx, city: "बेंगलुरु", cityAliases: ["बेंगलुरु"] };
+    const prospect = { index: 0, is_prospective_customer: true, intent_score: 70 };
+    const [inCity] = buildSignalRows([candidate({ title: "बेंगलुरु में कोचिंग चाहिए" })], [prospect], hindi);
+    const [elsewhere] = buildSignalRows([candidate({ title: "दिल्ली में कोचिंग चाहिए" })], [prospect], hindi);
+    const [latin] = buildSignalRows([candidate({ title: "Any coaching suggestions?" })], [prospect], hindi);
+    expect(inCity.location_match).toBe("exact");
+    expect(elsewhere.location_match).toBeNull();
+    expect(latin.location_match).toBeNull();
+  });
+
+  it("leaves city and location match empty for runs without a location", () => {
+    const [row] = buildSignalRows(
+      [candidate({ title: "Looking for coaching in Bangalore" })],
+      [{ index: 0, is_prospective_customer: true, intent_score: 70, location_match: "exact" }],
+      { ...ctx, city: "", cityAliases: [] }
+    );
+    expect(row).toMatchObject({ city: null, location_match: null });
+  });
 });
 
 describe("normalizeEmail / normalizePhone", () => {
@@ -446,6 +480,34 @@ describe("leadDedupeKeys / dedupeLeadCandidates", () => {
     dedupeLeadCandidates([{ email: "a@b.com" }], existing);
     expect(existing.size).toBe(0);
   });
+
+  it("adds cid and name + address keys for Google Maps leads only", () => {
+    expect(
+      leadDedupeKeys({
+        name: "Acme Academy",
+        source_channel: PLACES_CHANNEL,
+        raw_answers: { place: { cid: "42", address: "12, MG Road" } },
+      })
+    ).toEqual(["cid:42", "place:acme academy|12 mg road"]);
+    expect(leadDedupeKeys({ name: "Acme", source_channel: PLACES_CHANNEL, place_cid: null, place_address: null })).toEqual([
+      "place:acme|",
+    ]);
+    expect(leadDedupeKeys({ name: "Acme Academy", source_channel: "Reddit" })).toEqual([]);
+  });
+
+  it("treats a listing already saved (same cid, or same name + address) as a duplicate", () => {
+    const existing = buildExistingKeySet([
+      { name: "Acme Academy", source_channel: PLACES_CHANNEL, place_cid: "42", place_address: "12 MG Road" },
+    ]);
+    const rows = [
+      { id: 1, name: "Acme Academy (new branch name)", source_channel: PLACES_CHANNEL, raw_answers: { place: { cid: "42" } } },
+      { id: 2, name: "ACME academy", source_channel: PLACES_CHANNEL, raw_answers: { place: { cid: "99", address: "12, MG road" } } },
+      { id: 3, name: "Acme Academy", source_channel: PLACES_CHANNEL, raw_answers: { place: { cid: "77", address: "Brigade Road" } } },
+    ];
+    const { fresh, duplicates } = dedupeLeadCandidates(rows, existing);
+    expect(fresh.map((r) => r.id)).toEqual([3]);
+    expect(duplicates.map((r) => r.id)).toEqual([1, 2]);
+  });
 });
 
 describe("placeFitScore / leadStatusForScore", () => {
@@ -502,6 +564,7 @@ describe("buildPlaceLeadRow", () => {
         pipeline_run_id: "run-1",
         discovery_query: "NEET coaching",
         discovery_location: "Bengaluru",
+        fit_score: 85,
         fit_reason: "Strong fit",
         scored_by: "sarvam",
         place: {
@@ -531,6 +594,12 @@ describe("buildPlaceLeadRow", () => {
       status: "Cold",
     });
     expect(row.name).toHaveLength(200);
+  });
+
+  it("leaves the location empty for runs without one", () => {
+    const row = buildPlaceLeadRow(place(), { score: 40, reason: null, scoredBy: "rules" }, { ...ctx, city: "" });
+    expect(row.location).toBeNull();
+    expect(row.raw_answers).toMatchObject({ discovery_location: null, fit_score: 40, scored_by: "rules" });
   });
 
   it("tags runs consistently", () => {
@@ -576,6 +645,16 @@ describe("uniquePlaces", () => {
       place({ title: "Acme" }),
     ];
     expect(uniquePlaces(places).map((p) => `${p.title}|${p.address}`)).toEqual(["A|null", "Acme|MG Road", "Acme|Brigade Road", "Acme|null"]);
+  });
+
+  it("drops a listing matching either key: a new cid with the same name + address, or the same cid renamed", () => {
+    const places = [
+      place({ cid: "1", title: "Acme Academy", address: "12, MG Road" }),
+      place({ cid: "2", title: "ACME ACADEMY", address: "12 MG road" }),
+      place({ cid: "1", title: "Acme Academy & Co", address: "Elsewhere" }),
+      place({ cid: "3", title: "Acme Academy", address: "Brigade Road" }),
+    ];
+    expect(uniquePlaces(places).map((p) => p.cid)).toEqual(["1", "3"]);
   });
 });
 
@@ -643,6 +722,7 @@ describe("signalToLeadRow", () => {
       tags: ["ai-agent", "intent-signal"],
       raw_answers: {
         intent_signal_id: "sig-1",
+        intent_score: 85,
         post_excerpt: "Need NEET coaching",
         contact_request_quote: "please call me on 98450 12345",
         discovery_query: "NEET coaching",
@@ -673,7 +753,14 @@ describe("signalToLeadRow", () => {
       score: 0,
       status: "Cold",
       needs_guardian_consent: true,
-      raw_answers: { intent_signal_id: null, post_excerpt: null, contact_request_quote: null, discovery_query: null, discovery_location: null },
+      raw_answers: {
+        intent_signal_id: null,
+        intent_score: null,
+        post_excerpt: null,
+        contact_request_quote: null,
+        discovery_query: null,
+        discovery_location: null,
+      },
     });
     expect(signalToLeadRow({ platform: "quora", author_handle: "  " }, THRESHOLDS, NOW)).toMatchObject({
       name: "quora user",

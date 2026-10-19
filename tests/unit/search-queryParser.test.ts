@@ -14,6 +14,14 @@ import {
   sanitizeFilterValue,
   type LeadSearchFilters,
 } from "../../services/search/queryParser";
+import {
+  aliasRegex,
+  buildVocabulary,
+  DEFAULT_DISCOVERY_SETTINGS,
+  EDUCATION_VOCABULARY as edu,
+  mentionsTerm,
+  normalizeDiscoverySettings,
+} from "../../services/search/vocabulary";
 
 const filters = (overrides: Partial<LeadSearchFilters> = {}): LeadSearchFilters => ({ ...emptyFilters(), ...overrides });
 
@@ -23,8 +31,8 @@ describe("parseQueryKeywords (ported from queryParser.check.ts)", () => {
     ["Java Bangalore", { course_interest: "Java", city: "Bengaluru" }],
     ["Python training in Mysuru 2027", { course_interest: "Python", city: "Mysuru", exam_year: "2027" }],
     ["Full stack developers Hyderabad", { course_interest: "Full Stack", city: "Hyderabad" }],
-  ])("%s", (query, expected) => {
-    expect(parseQueryKeywords(query)).toMatchObject(expected);
+  ])("%s (education vocabulary)", (query, expected) => {
+    expect(parseQueryKeywords(query, edu)).toMatchObject(expected);
   });
 
   it("returns the Bengaluru aliases for Bangalore", () => {
@@ -39,7 +47,7 @@ describe("parseQueryKeywords", () => {
   });
 
   it("extracts every structured filter and leaves stopwords out of keywords", () => {
-    expect(parseQueryKeywords("Show me hot NEET aspirants from Instagram in Bangalore 2026 with score above 70")).toEqual({
+    expect(parseQueryKeywords("Show me hot NEET aspirants from Instagram in Bangalore 2026 with score above 70", edu)).toEqual({
       course_interest: "NEET",
       city: "Bengaluru",
       exam_year: "2026",
@@ -67,17 +75,45 @@ describe("parseQueryKeywords", () => {
     ["score at least 40", { min_score: 40 }],
     ["score 250", { min_score: 100 }],
   ])("%s", (query, expected) => {
-    expect(parseQueryKeywords(query)).toMatchObject(expected);
+    expect(parseQueryKeywords(query, edu)).toMatchObject(expected);
   });
 
   it("does not mistake JavaScript for Java", () => {
-    const result = parseQueryKeywords("javascript developers");
+    const result = parseQueryKeywords("javascript developers", edu);
     expect(result.course_interest).toBeNull();
     expect(result.keywords).toEqual(["javascript"]);
   });
 
   it("picks the earliest course and city in the query", () => {
-    expect(parseQueryKeywords("python or java in Mysore and Bangalore")).toMatchObject({ course_interest: "Python", city: "Mysuru" });
+    expect(parseQueryKeywords("python or java in Mysore and Bangalore", edu)).toMatchObject({
+      course_interest: "Python",
+      city: "Mysuru",
+    });
+  });
+
+  it("has no education interests by default: course words stay keywords", () => {
+    expect(parseQueryKeywords("NEET aspirants in Bangalore")).toMatchObject({
+      course_interest: null,
+      city: "Bengaluru",
+      keywords: ["neet"],
+    });
+  });
+
+  it("recognises workspace interests and cities, including non-Latin aliases", () => {
+    const vocab = buildVocabulary(
+      normalizeDiscoverySettings({
+        country: "us",
+        interests: [{ label: "Dental Implants", aliases: ["implant dentistry", "दंत प्रत्यारोपण"] }],
+        cities: [{ label: "Austin", aliases: ["atx"] }, { label: "मुंबई", aliases: ["mumbai"] }],
+      })
+    );
+    expect(parseQueryKeywords("implant dentistry clinics in ATX", vocab)).toMatchObject({
+      course_interest: "Dental Implants",
+      city: "Austin",
+    });
+    expect(parseQueryKeywords("दंत प्रत्यारोपण मुंबई", vocab)).toMatchObject({ course_interest: "Dental Implants", city: "मुंबई" });
+    // "us" has no built-in city list, so an Indian city is not recognised.
+    expect(parseQueryKeywords("dentists in Bangalore", vocab).city).toBeNull();
   });
 
   it("keeps remaining words as unique lowercase keywords", () => {
@@ -91,22 +127,56 @@ describe("parseQueryKeywords", () => {
 
   it("removes the matched word itself, not an earlier substring", () => {
     expect(parseQueryKeywords("Kotak employees in Kota")).toMatchObject({ city: "Kota", keywords: ["kotak", "employees"] });
-    expect(parseQueryKeywords("asap SAP training")).toMatchObject({ course_interest: "SAP", keywords: ["asap"] });
+    expect(parseQueryKeywords("asap SAP training", edu)).toMatchObject({ course_interest: "SAP", keywords: ["asap"] });
+  });
+});
+
+describe("vocabulary matching", () => {
+  it("matches whole words in any script", () => {
+    expect(mentionsTerm("कोचिंग बेंगलुरु में", "बेंगलुरु")).toBe(true);
+    expect(mentionsTerm("बेंगलुरुवाला", "बेंगलुरु")).toBe(false);
+    expect(mentionsTerm("Need a tutor in Bangalore!", "bangalore")).toBe(true);
+    expect(mentionsTerm("Bangalorean food", "bangalore")).toBe(false);
+    expect(mentionsTerm("anything", "")).toBe(false);
+    expect(aliasRegex([]).test("anything")).toBe(false);
+  });
+
+  it("normalises stored settings and falls back to defaults", () => {
+    expect(normalizeDiscoverySettings(null)).toEqual(DEFAULT_DISCOVERY_SETTINGS);
+    expect(
+      normalizeDiscoverySettings({
+        country: "US",
+        language: "en-US",
+        interestPreset: "unknown",
+        businessDescription: "  dental   clinics ",
+        interests: [{ label: "Implants" }, { label: "implants" }, { aliases: ["x"] }, "junk"],
+      })
+    ).toEqual({
+      businessDescription: "dental clinics",
+      country: "us",
+      language: "en-US",
+      interestPreset: "none",
+      interests: [{ label: "Implants", aliases: [] }],
+      cities: [],
+    });
   });
 });
 
 describe("normalizeFilters", () => {
   it("coerces untrusted model output", () => {
     expect(
-      normalizeFilters({
-        course: "neet ug",
-        location: "bangalore",
-        exam_year: "NEET 2027 batch",
-        source_platform: "Facebook Lead Ads",
-        status: "hot",
-        min_score: "72.6",
-        keywords: ["Biology", "the", "biology", "a", 42, "x,y(z)", "Physics"],
-      })
+      normalizeFilters(
+        {
+          course: "neet ug",
+          location: "bangalore",
+          exam_year: "NEET 2027 batch",
+          source_platform: "Facebook Lead Ads",
+          status: "hot",
+          min_score: "72.6",
+          keywords: ["Biology", "the", "biology", "a", 42, "x,y(z)", "Physics"],
+        },
+        edu
+      )
     ).toEqual({
       course_interest: "NEET",
       city: "Bengaluru",
@@ -163,8 +233,9 @@ describe("sanitizeFilterValue", () => {
 
 describe("canonicalCourse / canonicalCity", () => {
   it("maps known spellings to labels", () => {
-    expect(canonicalCourse("NEET PG")).toBe("NEET");
-    expect(canonicalCourse("full-stack")).toBe("Full Stack");
+    expect(canonicalCourse("NEET PG", edu)).toBe("NEET");
+    expect(canonicalCourse("full-stack", edu)).toBe("Full Stack");
+    expect(canonicalCourse("NEET PG")).toBe("NEET PG");
     expect(canonicalCity("Bombay")).toBe("Mumbai");
     expect(canonicalCity("new delhi")).toBe("Delhi");
   });
@@ -187,8 +258,9 @@ describe("cityAliases / coursePatterns / courseTags", () => {
   });
 
   it("returns course ilike fragments", () => {
-    expect(coursePatterns("Full Stack")).toEqual(["full%stack", "fullstack", "mern"]);
-    expect(coursePatterns("neet")).toEqual(["neet"]);
+    expect(coursePatterns("Full Stack", edu)).toEqual(["full%stack", "fullstack", "mern"]);
+    expect(coursePatterns("Full Stack")).toEqual(["full stack"]);
+    expect(coursePatterns("neet", edu)).toEqual(["neet"]);
     expect(coursePatterns("Blockchain")).toEqual(["blockchain"]);
     expect(coursePatterns("")).toEqual([]);
   });

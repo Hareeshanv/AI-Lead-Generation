@@ -7,6 +7,7 @@ import { parse } from "../http/validate";
 import { getCtx, requireRole } from "../middleware/auth";
 import { toSettingsDto } from "../services/account";
 import { events } from "../events";
+import { INTEREST_PRESETS, MAX_CUSTOM_TERMS, normalizeDiscoverySettings } from "../../../../services/search/vocabulary";
 
 /** Mounted at /api/settings behind requireAuth(): workspace settings. */
 export const settingsRouter = createRouter();
@@ -32,6 +33,34 @@ function isValidLocale(locale: string): boolean {
   }
 }
 
+const termSchema = z
+  .object({
+    label: z.string().trim().min(1, "Enter a name").max(80),
+    aliases: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+  })
+  .strict();
+
+/** Partial update: omitted fields keep their stored value. */
+const discoverySchema = z
+  .object({
+    businessDescription: z.string().trim().max(300).nullable().optional(),
+    country: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z]{2}$/, "Use a two-letter country code")
+      .transform((c) => c.toLowerCase())
+      .optional(),
+    language: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?$/, "Use a language code such as en")
+      .optional(),
+    interestPreset: z.enum(INTEREST_PRESETS).optional(),
+    interests: z.array(termSchema).max(MAX_CUSTOM_TERMS).optional(),
+    cities: z.array(termSchema).max(MAX_CUSTOM_TERMS).optional(),
+  })
+  .strict();
+
 const updateSettingsSchema = z
   .object({
     name: z.string().trim().min(1, "Workspace name is required").max(120).optional(),
@@ -53,6 +82,7 @@ const updateSettingsSchema = z
       .optional(),
     defaultOwnerId: z.string().uuid().nullable().optional(),
     branding: z.record(z.unknown()).optional(),
+    discovery: discoverySchema.optional(),
   })
   .strict();
 
@@ -87,6 +117,10 @@ settingsRouter.patch("/", requireRole("admin"), async (req, res) => {
   if (body.scoring !== undefined) patch.scoring = body.scoring;
   if (body.defaultOwnerId !== undefined) patch.default_owner_id = body.defaultOwnerId;
   if (body.branding !== undefined) patch.branding = body.branding;
+  if (body.discovery !== undefined) {
+    const current = normalizeDiscoverySettings((await settingsDb.get(orgId)).discovery);
+    patch.discovery = { ...normalizeDiscoverySettings({ ...current, ...body.discovery }) };
+  }
   if (Object.keys(patch).length > 0) await settingsDb.update(orgId, patch);
 
   const changes = Object.keys(body);

@@ -1,5 +1,6 @@
 import { dbQueries } from "@ai-lead-gen/database";
-import { sarvamClient } from "../sarvam";
+import { sarvamClient, type SarvamConfig } from "../sarvam";
+import { buildVocabulary, type DiscoverySettings, type SearchVocabulary } from "./vocabulary";
 import {
   type LeadSearchFilters,
   cityAliases,
@@ -35,27 +36,42 @@ export class LeadSearchError extends Error {
 }
 
 const SARVAM_PARSER_TIMEOUT_MS = 30_000;
+const MAX_KNOWN_INTERESTS = 40;
+
+export interface LeadSearchOptions {
+  /** Workspace discovery settings: business description and search vocabulary (interests, cities). */
+  discovery?: DiscoverySettings;
+  /** Workspace Sarvam credentials; the SARVAM_* env vars are used when absent. */
+  sarvam?: SarvamConfig | null;
+}
 
 /** Sarvam turns the query into filters; the keyword parser is the fallback and fills gaps. */
-export async function parseLeadQuery(query: string): Promise<ParsedLeadQuery> {
-  const keywordFilters = parseQueryKeywords(query);
+export async function parseLeadQuery(query: string, options: LeadSearchOptions = {}): Promise<ParsedLeadQuery> {
+  const vocab = buildVocabulary(options.discovery);
+  const keywordFilters = parseQueryKeywords(query, vocab);
 
-  if (!sarvamClient.isConfigured()) {
-    return { filters: keywordFilters, parsedBy: "keywords", parserWarning: "SARVAM_API_KEY is not configured" };
+  if (!options.sarvam?.apiKey && !sarvamClient.isConfigured()) {
+    return { filters: keywordFilters, parsedBy: "keywords", parserWarning: "Sarvam is not configured" };
   }
 
   try {
     const response = await sarvamClient.callAgent({
       agentId: "agt-query-parser",
-      input: { query },
+      input: {
+        query,
+        business: options.discovery?.businessDescription ?? null,
+        known_interests: vocab.interests.slice(0, MAX_KNOWN_INTERESTS).map((i) => i.label),
+      },
       timeoutMs: SARVAM_PARSER_TIMEOUT_MS,
+      maxAttempts: 2,
+      config: options.sarvam ?? undefined,
     });
     if (!response.success) {
       const reason = response.error || "Sarvam returned no result";
       console.warn(`[LeadSearch] Sarvam query parser unavailable (${reason}); using keyword parser.`);
       return { filters: keywordFilters, parsedBy: "keywords", parserWarning: reason };
     }
-    return { filters: mergeFilters(normalizeFilters(response.output), keywordFilters), parsedBy: "sarvam" };
+    return { filters: mergeFilters(normalizeFilters(response.output, vocab), keywordFilters), parsedBy: "sarvam" };
   } catch (err: any) {
     const reason = err?.message || "Sarvam query parser failed";
     console.warn(`[LeadSearch] ${reason}; using keyword parser.`);
@@ -67,15 +83,36 @@ export async function parseLeadQuery(query: string): Promise<ParsedLeadQuery> {
  * Searches stored leads (ad-form / consented leads and existing rows) and intent signals.
  * Never generates or inserts people. Throws LeadSearchError when the leads query fails.
  */
-export async function runLeadSearch(orgId: string, query: string): Promise<LeadSearchResult> {
-  const parsed = await parseLeadQuery(query);
-  const { filters } = parsed;
+export async function runLeadSearch(orgId: string, query: string, options: LeadSearchOptions = {}): Promise<LeadSearchResult> {
+  const parsed = await parseLeadQuery(query, options);
   const warnings: string[] = [];
   if (parsed.parserWarning) warnings.push(`Sarvam query parser unavailable: ${parsed.parserWarning}`);
+  return searchWithFilters(orgId, parsed, buildVocabulary(options.discovery), warnings);
+}
 
+/**
+ * Re-runs a search from filters a previous search returned (e.g. after the user removes a filter chip),
+ * skipping query parsing. `rawFilters` is untrusted and normalized like parser output.
+ */
+export async function runFilteredLeadSearch(
+  orgId: string,
+  rawFilters: unknown,
+  options: Pick<LeadSearchOptions, "discovery"> = {}
+): Promise<LeadSearchResult> {
+  const vocab = buildVocabulary(options.discovery);
+  return searchWithFilters(orgId, { filters: normalizeFilters(rawFilters, vocab), parsedBy: "keywords" }, vocab, []);
+}
+
+async function searchWithFilters(
+  orgId: string,
+  parsed: ParsedLeadQuery,
+  vocab: SearchVocabulary,
+  warnings: string[]
+): Promise<LeadSearchResult> {
+  const { filters } = parsed;
   const structured = hasStructuredFilter(filters);
-  const course = filters.course_interest ? coursePatterns(filters.course_interest) : [];
-  const cities = filters.city ? cityAliases(filters.city) : [];
+  const course = filters.course_interest ? coursePatterns(filters.course_interest, vocab) : [];
+  const cities = filters.city ? cityAliases(filters.city, vocab) : [];
 
   let leads: any[] = [];
   if (structured || filters.keywords.length > 0) {
@@ -95,7 +132,7 @@ export async function runLeadSearch(orgId: string, query: string): Promise<LeadS
       throw new LeadSearchError(err?.message || "Lead search failed", filters, parsed.parsedBy);
     }
   } else {
-    warnings.push("No course, city, year, source, status or keyword was recognised in the query.");
+    warnings.push("No interest, city, year, source, status or keyword was recognised in the query.");
   }
 
   let signals: any[] = [];

@@ -39,6 +39,8 @@ export function sanitizeSearchText(text: string): string {
 }
 
 const SEARCH_COLUMNS = ["name", "company", "email", "phone", "title", "location"];
+/** Rows per batched update RPC call. */
+const BATCH_SIZE = 500;
 
 function applyFilters<Q extends { [k: string]: any }>(query: Q, f: LeadListFilters): Q {
   let q: any = query;
@@ -149,4 +151,71 @@ export const leadsDb = {
     };
   },
 
+  /** Different score/status per lead in one statement per 500 rows; returns the updated rows. */
+  async updateScores(orgId: string, rows: LeadScoreUpdate[]): Promise<LeadRow[]> {
+    const updated: LeadRow[] = [];
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const { data, error } = await dbClient.rpc("update_lead_scores", {
+        p_org_id: orgId,
+        p_rows: rows.slice(i, i + BATCH_SIZE),
+      });
+      if (error) throw dbError("update lead scores", error);
+      updated.push(...((data || []) as LeadRow[]));
+    }
+    return updated;
+  },
+
+  /** Adds and/or removes tags on many leads (order kept, no duplicates); returns only the rows that changed. */
+  async updateTags(orgId: string, leadIds: string[], change: { add?: string[]; remove?: string[] }): Promise<LeadRow[]> {
+    const updated: LeadRow[] = [];
+    for (let i = 0; i < leadIds.length; i += BATCH_SIZE) {
+      const { data, error } = await dbClient.rpc("update_lead_tags", {
+        p_org_id: orgId,
+        p_lead_ids: leadIds.slice(i, i + BATCH_SIZE),
+        p_add: change.add ?? [],
+        p_remove: change.remove ?? [],
+      });
+      if (error) throw dbError("update lead tags", error);
+      updated.push(...((data || []) as LeadRow[]));
+    }
+    return updated;
+  },
+
+  /** Ad leads (source_platform set) that have not been scored yet, oldest first. */
+  async listUnscoredAdLeads(orgId: string, limit = 50): Promise<LeadRow[]> {
+    const { data, error } = await dbClient
+      .from("leads")
+      .select("*")
+      .eq("org_id", orgId)
+      .is("scored_at", null)
+      .not("source_platform", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (error) throw dbError("list unscored ad leads", error);
+    return (data || []) as LeadRow[];
+  },
+
+  /**
+   * System-wide lookup for the background scorer: org ids that have unscored ad leads. Returns ids
+   * only; every read and write after it is scoped to one org.
+   */
+  async listOrgIdsWithUnscoredAdLeads(limit = 500): Promise<string[]> {
+    const { data, error } = await dbClient
+      .from("leads")
+      .select("org_id")
+      .is("scored_at", null)
+      .not("source_platform", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    if (error) throw dbError("list orgs with unscored ad leads", error);
+    return Array.from(new Set((data || []).map((r: any) => String(r.org_id))));
+  },
 };
+
+export interface LeadScoreUpdate {
+  id: string;
+  score: number;
+  status?: string | null;
+  /** Defaults to now(). */
+  scored_at?: string | null;
+}

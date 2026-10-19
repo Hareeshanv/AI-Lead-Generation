@@ -14,12 +14,14 @@ export interface OrgSettingsRow {
   scoring: ScoringThresholds;
   default_owner_id: string | null;
   branding: Record<string, unknown>;
+  /** Lead discovery settings (business description, country, search vocabulary); validated by the API. */
+  discovery: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
 
 export type OrgSettingsPatch = Partial<
-  Pick<OrgSettingsRow, "currency" | "timezone" | "locale" | "scoring" | "default_owner_id" | "branding">
+  Pick<OrgSettingsRow, "currency" | "timezone" | "locale" | "scoring" | "default_owner_id" | "branding" | "discovery">
 >;
 
 export const DEFAULT_SCORING: ScoringThresholds = { hot: 80, warm: 50 };

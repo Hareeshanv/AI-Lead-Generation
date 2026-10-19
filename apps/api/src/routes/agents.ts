@@ -21,7 +21,13 @@ export const agentsRouter = createRouter();
 export const runDiscoverySchema = z
   .object({
     query: z.string().trim().min(2, "Enter what to search for").max(200),
-    location: z.string().trim().min(2, "Enter a city or area").max(120),
+    /** Empty searches without a location. */
+    location: z
+      .string()
+      .trim()
+      .max(120)
+      .refine((l) => l === "" || l.length >= 2, "Enter a city or area, or leave it empty")
+      .default(""),
     sources: z
       .array(z.enum(DISCOVERY_SOURCES))
       .min(1, "Pick at least one source")
@@ -176,7 +182,7 @@ agentsRouter.get("/:id/logs", async (req, res) => {
   );
 });
 
-// POST /api/agents/:id/runs — body {query, location, sources?, maxResults?}; 202 with the queued run
+// POST /api/agents/:id/runs — body {query, location?, sources?, maxResults?}; 202 with the queued run
 agentsRouter.post("/:id/runs", agentRunLimit, async (req, res) => {
   requireAgent(req.params.id);
   const { orgId, userId } = getCtx(req);

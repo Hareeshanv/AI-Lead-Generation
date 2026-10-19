@@ -224,6 +224,64 @@ describe("scoreLead", () => {
     expect(result.score).toBe(35);
     expect(result.band).toBe("Hot");
   });
+
+  describe("ad-form intent signals (merged from the intent scorer)", () => {
+    it("rewards recent consent and a guardian enquiring", () => {
+      expect(rules({ consent_at: "2026-06-12T00:00:00Z" })).toEqual(["Consent to contact", "Consented in the last 7 days"]);
+      expect(rules({ consent_at: "2026-06-01T00:00:00Z" })).toEqual(["Consent to contact"]);
+      expect(rules({ consent_at: "2026-06-20T00:00:00Z" })).toEqual(["Consent to contact"]);
+      expect(rules({ is_guardian: true })).toEqual(["Parent or guardian enquiring"]);
+      expect(rules({ is_guardian: false })).toEqual([]);
+    });
+
+    it("reads the exam year from free text", () => {
+      expect(rules({ exam_year: "2026-27 batch" })).toEqual(["Exam within a year"]);
+      expect(rules({ exam_year: "NEET 2027" })).toEqual(["Exam within a year"]);
+    });
+  });
+
+  describe("AI score blend", () => {
+    const base = { email: "a@b.com", phone: "9845012345", company: "Acme" }; // 45 rule points
+
+    it("blends the stored fit score with the rule signals and keeps reasons summing to the score", () => {
+      const result = scoreLead({ ...base, raw_answers: { fit_score: 90, scored_by: "sarvam" } }, DEFAULT_THRESHOLDS, NOW);
+      expect(result.score).toBe(Math.round(0.7 * 90 + 0.3 * 45));
+      expect(result.reasons[0]).toEqual({ rule: "AI fit score", points: result.score - 45 });
+      expect(result.reasons.reduce((s, r) => s + r.points, 0)).toBe(result.score);
+      expect(result.band).toBe("Warm");
+    });
+
+    it("uses the intent score when there is no fit score, and labels rule-based fit scores", () => {
+      expect(scoreLead({ raw_answers: { intent_score: 80 } }, DEFAULT_THRESHOLDS, NOW)).toEqual({
+        score: 56,
+        band: "Warm",
+        reasons: [{ rule: "AI intent score", points: 56 }],
+      });
+      expect(scoreLead({ raw_answers: { fit_score: 60, scored_by: "rules" } }, DEFAULT_THRESHOLDS, NOW).reasons[0].rule).toBe(
+        "Listing fit score"
+      );
+    });
+
+    it("never overwrites the stored AI score and ignores invalid ones", () => {
+      const lead = { ...base, raw_answers: { fit_score: 90, intent_score: "x" } };
+      scoreLead(lead, DEFAULT_THRESHOLDS, NOW);
+      expect(lead.raw_answers).toEqual({ fit_score: 90, intent_score: "x" });
+      expect(scoreLead({ ...base, raw_answers: { fit_score: "high" } }, DEFAULT_THRESHOLDS, NOW).score).toBe(45);
+      expect(scoreLead({ ...base, raw_answers: { fit_score: null } }, DEFAULT_THRESHOLDS, NOW).score).toBe(45);
+    });
+
+    it("applies penalties in full after the blend", () => {
+      const result = scoreLead({ ...base, raw_answers: { fit_score: 100 }, do_not_contact: true }, DEFAULT_THRESHOLDS, NOW);
+      expect(result.score).toBe(Math.round(0.7 * 100 + 0.3 * 45) - 40);
+      expect(result.reasons.at(-1)).toEqual({ rule: "Do not contact", points: -40 });
+    });
+
+    it("bands blended scores with workspace thresholds", () => {
+      const lead = { raw_answers: { fit_score: 100 } };
+      expect(scoreLead(lead, DEFAULT_THRESHOLDS, NOW)).toMatchObject({ score: 70, band: "Warm" });
+      expect(scoreLead(lead, { hot: 70, warm: 40 }, NOW)).toMatchObject({ score: 70, band: "Hot" });
+    });
+  });
 });
 
 describe("statusAfterScoring", () => {

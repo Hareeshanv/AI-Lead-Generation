@@ -1,4 +1,4 @@
-import { activitiesDb, leadsDb, orgsDb, settingsDb, type LeadRow } from "@ai-lead-gen/database";
+import { activitiesDb, leadsDb, orgsDb, settingsDb, type LeadRow, type LeadScoreUpdate } from "@ai-lead-gen/database";
 import { HttpError } from "../../http/errors";
 import { events } from "../../events";
 import "../crm/events";
@@ -115,6 +115,33 @@ export async function ingestExternalLead(orgId: string, leadId: string): Promise
   return scored;
 }
 
+/**
+ * Rescores already-loaded leads with one batched write and emits the changes; returns the leads
+ * whose score or status changed (updated rows).
+ */
+export async function rescoreLeads(
+  orgId: string,
+  leads: LeadRow[],
+  actorId: string | null,
+  thresholds: ScoringThresholds
+): Promise<LeadRow[]> {
+  const byId = new Map<string, LeadRow>();
+  const updates: LeadScoreUpdate[] = [];
+  for (const lead of leads) {
+    const fields = scoredFields(lead, thresholds, false);
+    if (fields.score === lead.score && fields.status === lead.status) continue;
+    byId.set(lead.id, lead);
+    updates.push({ id: lead.id, ...fields });
+  }
+  if (updates.length === 0) return [];
+  const updated = await leadsDb.updateScores(orgId, updates);
+  for (const after of updated) {
+    const before = byId.get(after.id);
+    if (before) await emitLeadChanges(orgId, actorId, before, after, ["score", "status"]);
+  }
+  return updated;
+}
+
 /** Rescores every lead in the org in pages (after the scoring thresholds change). */
 export async function rescoreAllLeads(orgId: string, maxLeads = 10_000): Promise<number> {
   const thresholds = await loadThresholds(orgId);
@@ -122,16 +149,26 @@ export async function rescoreAllLeads(orgId: string, maxLeads = 10_000): Promise
   let changed = 0;
   for (let from = 0; from < maxLeads; from += pageSize) {
     const { rows } = await leadsDb.list(orgId, {}, { from, to: from + pageSize - 1, sort: { column: "created_at", ascending: true } });
-    for (const lead of rows) {
-      const fields = scoredFields(lead, thresholds, false);
-      if (fields.score === lead.score && fields.status === lead.status) continue;
-      const updated = await leadsDb.update(orgId, lead.id, fields);
-      if (updated) {
-        changed++;
-        await emitLeadChanges(orgId, null, lead, updated, ["score", "status"]);
-      }
-    }
+    changed += (await rescoreLeads(orgId, rows, null, thresholds)).length;
     if (rows.length < pageSize) break;
   }
   return changed;
+}
+
+/**
+ * Background fallback for ad-form leads that still have no scored_at (the lead.ingested job
+ * normally scores them first and emits lead.created). One batched write per org; returns how many
+ * leads were scored.
+ */
+export async function scorePendingLeads(limitPerOrg = 50): Promise<number> {
+  const orgIds = await leadsDb.listOrgIdsWithUnscoredAdLeads();
+  let scored = 0;
+  for (const orgId of orgIds) {
+    const leads = await leadsDb.listUnscoredAdLeads(orgId, limitPerOrg);
+    if (leads.length === 0) continue;
+    const thresholds = await loadThresholds(orgId);
+    const updates = leads.map((lead) => ({ id: lead.id, ...scoredFields(lead, thresholds, false) }));
+    scored += (await leadsDb.updateScores(orgId, updates)).length;
+  }
+  return scored;
 }

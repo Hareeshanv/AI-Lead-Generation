@@ -1,7 +1,10 @@
 /**
  * Turns a free-text lead search ("NEET students in Bengaluru") into structured filters.
- * Pure module (no DB / network) so it can be unit-tested directly.
+ * Pure module (no DB / network) so it can be unit-tested directly. Which interests and cities are
+ * recognised comes from the workspace vocabulary (see ./vocabulary).
  */
+
+import { DEFAULT_VOCABULARY, type CityDef, type InterestDef, type SearchVocabulary } from "./vocabulary";
 
 export type SourcePlatform = "meta" | "google";
 
@@ -27,80 +30,6 @@ export function emptyFilters(): LeadSearchFilters {
   };
 }
 
-interface CourseDef {
-  label: string;
-  detect: RegExp;
-  /** ilike fragments (without surrounding %); "%" inside acts as a wildcard. */
-  patterns: string[];
-}
-
-// Order matters only for ties at the same position in the query.
-const COURSES: CourseDef[] = [
-  { label: "NEET", detect: /\bneet(?:[\s-]?(?:ug|pg))?\b/i, patterns: ["neet"] },
-  { label: "JEE", detect: /\b(?:iit[\s-]?)?jee(?:\s+(?:main|mains|advanced))?\b/i, patterns: ["jee"] },
-  { label: "Full Stack", detect: /\bfull[\s-]?stack\b|\bmern\b|\bmean\s+stack\b/i, patterns: ["full%stack", "fullstack", "mern"] },
-  { label: "Java", detect: /\bjava\b(?!\s*script)/i, patterns: ["java"] },
-  { label: "Python", detect: /\bpython\b/i, patterns: ["python"] },
-  {
-    label: "Software Testing",
-    detect: /\b(?:software\s+|manual\s+|automation\s+)?testing\b|\bselenium\b|\bqa\s+(?:training|course|engineer)s?\b/i,
-    patterns: ["testing", "selenium"],
-  },
-  { label: "Data Science", detect: /\bdata\s+scien(?:ce|tists?)\b/i, patterns: ["data scien"] },
-  { label: "Data Analytics", detect: /\bdata\s+analy(?:tics|st|sts)\b/i, patterns: ["data analy"] },
-  { label: "SAP", detect: /\bsap(?:\s+(?:fico|mm|sd|abap|hana|basis))?\b/i, patterns: ["sap"] },
-  { label: "Digital Marketing", detect: /\bdigital\s+marketing\b/i, patterns: ["digital marketing"] },
-  { label: "UPSC", detect: /\bupsc\b|\bias\s+(?:coaching|exam)\b/i, patterns: ["upsc"] },
-  { label: "CUET", detect: /\bcuet\b/i, patterns: ["cuet"] },
-  { label: "KCET", detect: /\bkcet\b/i, patterns: ["kcet"] },
-];
-
-interface CityDef {
-  label: string;
-  aliases: string[];
-}
-
-const CITIES: CityDef[] = [
-  { label: "Bengaluru", aliases: ["bengaluru", "bangalore", "blr", "bengalooru"] },
-  { label: "Mysuru", aliases: ["mysuru", "mysore"] },
-  { label: "Mangaluru", aliases: ["mangaluru", "mangalore"] },
-  { label: "Hubballi", aliases: ["hubballi", "hubli", "dharwad"] },
-  { label: "Belagavi", aliases: ["belagavi", "belgaum"] },
-  { label: "Hyderabad", aliases: ["hyderabad", "secunderabad", "hyd"] },
-  { label: "Chennai", aliases: ["chennai", "madras"] },
-  { label: "Mumbai", aliases: ["mumbai", "bombay", "navi mumbai", "thane"] },
-  { label: "Pune", aliases: ["pune", "poona"] },
-  { label: "Delhi", aliases: ["delhi", "new delhi"] },
-  { label: "Gurugram", aliases: ["gurugram", "gurgaon"] },
-  { label: "Noida", aliases: ["noida", "greater noida"] },
-  { label: "Kolkata", aliases: ["kolkata", "calcutta"] },
-  { label: "Ahmedabad", aliases: ["ahmedabad", "amdavad"] },
-  { label: "Jaipur", aliases: ["jaipur"] },
-  { label: "Kota", aliases: ["kota"] },
-  { label: "Lucknow", aliases: ["lucknow"] },
-  { label: "Chandigarh", aliases: ["chandigarh", "mohali", "panchkula"] },
-  { label: "Indore", aliases: ["indore"] },
-  { label: "Bhopal", aliases: ["bhopal"] },
-  { label: "Nagpur", aliases: ["nagpur"] },
-  { label: "Surat", aliases: ["surat"] },
-  { label: "Vadodara", aliases: ["vadodara", "baroda"] },
-  { label: "Patna", aliases: ["patna"] },
-  { label: "Ranchi", aliases: ["ranchi"] },
-  { label: "Bhubaneswar", aliases: ["bhubaneswar", "bhubaneshwar"] },
-  { label: "Guwahati", aliases: ["guwahati", "gauhati"] },
-  { label: "Kochi", aliases: ["kochi", "cochin", "ernakulam"] },
-  { label: "Thiruvananthapuram", aliases: ["thiruvananthapuram", "trivandrum"] },
-  { label: "Coimbatore", aliases: ["coimbatore", "kovai"] },
-  { label: "Madurai", aliases: ["madurai"] },
-  { label: "Tiruchirappalli", aliases: ["tiruchirappalli", "trichy"] },
-  { label: "Visakhapatnam", aliases: ["visakhapatnam", "vizag"] },
-  { label: "Vijayawada", aliases: ["vijayawada"] },
-  { label: "Dehradun", aliases: ["dehradun"] },
-  { label: "Varanasi", aliases: ["varanasi", "banaras", "benares"] },
-  { label: "Prayagraj", aliases: ["prayagraj", "allahabad"] },
-  { label: "Puducherry", aliases: ["puducherry", "pondicherry"] },
-];
-
 const KNOWN_STATUSES = ["Hot", "Warm", "Cold", "New", "Contacted", "Qualified", "Converted", "Lost"];
 
 const STOPWORDS = new Set([
@@ -109,7 +38,8 @@ const STOPWORDS = new Set([
   "looking", "interested", "students", "student", "aspirants", "aspirant", "leads", "lead", "people",
   "training", "course", "courses", "class", "classes", "coaching", "developers", "developer", "learners",
   "candidates", "parents", "batch", "year", "exam", "city", "based", "score", "above", "over", "least",
-  "minimum", "min", "ads", "ad", "form", "forms", "from", "via",
+  "minimum", "min", "ads", "ad", "form", "forms", "from", "via", "customers", "customer", "clients", "client",
+  "buyers", "buyer", "prospects", "prospect",
 ]);
 
 const SOURCE_PATTERNS: { platform: SourcePlatform; detect: RegExp }[] = [
@@ -121,64 +51,58 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function aliasRegex(aliases: string[]): RegExp {
-  return new RegExp(`\\b(?:${aliases.map(escapeRegExp).join("|")})\\b`, "i");
-}
-
-const CITY_REGEXES = CITIES.map((c) => ({ city: c, re: aliasRegex(c.aliases) }));
-
 /** Strips characters that break PostgREST filter syntax or act as ilike wildcards. */
 export function sanitizeFilterValue(value: string): string {
   return value.replace(/[,()"\\%*:{}]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function findCourse(text: string): { course: CourseDef; index: number; match: string } | null {
-  let best: { course: CourseDef; index: number; match: string } | null = null;
-  for (const course of COURSES) {
+function findCourse(text: string, vocab: SearchVocabulary): { course: InterestDef; index: number; match: string } | null {
+  let best: { course: InterestDef; index: number; match: string } | null = null;
+  for (const course of vocab.interests) {
     const m = course.detect.exec(text);
     if (m && (best === null || m.index < best.index)) best = { course, index: m.index, match: m[0] };
   }
   return best;
 }
 
-function findCity(text: string): { city: CityDef; match: string } | null {
+function findCity(text: string, vocab: SearchVocabulary): { city: CityDef; match: string } | null {
   let best: { city: CityDef; index: number; match: string } | null = null;
-  for (const { city, re } of CITY_REGEXES) {
-    const m = re.exec(text);
+  for (const city of vocab.cities) {
+    const m = city.detect.exec(text);
     if (m && (best === null || m.index < best.index)) best = { city, index: m.index, match: m[0] };
   }
   return best ? { city: best.city, match: best.match } : null;
 }
 
 /** Canonical course label ("neet ug" -> "NEET"); unknown courses are returned trimmed. */
-export function canonicalCourse(value: unknown): string | null {
+export function canonicalCourse(value: unknown, vocab: SearchVocabulary = DEFAULT_VOCABULARY): string | null {
   if (typeof value !== "string") return null;
   const trimmed = sanitizeFilterValue(value);
   if (!trimmed) return null;
-  return findCourse(trimmed)?.course.label ?? trimmed;
+  return findCourse(trimmed, vocab)?.course.label ?? trimmed;
 }
 
 /** Canonical city label ("Bangalore" -> "Bengaluru"); unknown cities are returned trimmed. */
-export function canonicalCity(value: unknown): string | null {
+export function canonicalCity(value: unknown, vocab: SearchVocabulary = DEFAULT_VOCABULARY): string | null {
   if (typeof value !== "string") return null;
   const trimmed = sanitizeFilterValue(value);
   if (!trimmed) return null;
-  return findCity(trimmed)?.city.label ?? trimmed;
+  return findCity(trimmed, vocab)?.city.label ?? trimmed;
 }
 
 /** All spellings that should match a city in an ilike search. */
-export function cityAliases(city: string): string[] {
-  const clean = sanitizeFilterValue(city).toLowerCase();
+export function cityAliases(city: string, vocab: SearchVocabulary = DEFAULT_VOCABULARY): string[] {
+  const clean = sanitizeFilterValue(city).normalize("NFKC").toLowerCase();
   if (!clean) return [];
-  const def = CITIES.find((c) => c.label.toLowerCase() === clean || c.aliases.includes(clean));
+  const def = vocab.cities.find((c) => c.label.toLowerCase() === clean || c.aliases.includes(clean));
   return def ? def.aliases : [clean];
 }
 
 /** ilike fragments that should match a course (without surrounding %). */
-export function coursePatterns(course: string): string[] {
+export function coursePatterns(course: string, vocab: SearchVocabulary = DEFAULT_VOCABULARY): string[] {
   const clean = sanitizeFilterValue(course);
   if (!clean) return [];
-  const def = COURSES.find((c) => c.label.toLowerCase() === clean.toLowerCase());
+  const def = vocab.interests.find((c) => c.label.toLowerCase() === clean.toLowerCase());
   return def ? def.patterns : [clean.toLowerCase()];
 }
 
@@ -218,7 +142,7 @@ function canonicalScore(value: unknown): number | null {
 }
 
 /** Coerces untrusted filter JSON (e.g. from the Sarvam parser) into LeadSearchFilters. */
-export function normalizeFilters(raw: any): LeadSearchFilters {
+export function normalizeFilters(raw: any, vocab: SearchVocabulary = DEFAULT_VOCABULARY): LeadSearchFilters {
   const src = raw && typeof raw === "object" ? raw : {};
   const keywords = Array.isArray(src.keywords)
     ? Array.from(
@@ -231,8 +155,8 @@ export function normalizeFilters(raw: any): LeadSearchFilters {
       ).slice(0, 10) as string[]
     : [];
   return {
-    course_interest: canonicalCourse(src.course_interest ?? src.course),
-    city: canonicalCity(src.city ?? src.location),
+    course_interest: canonicalCourse(src.course_interest ?? src.course, vocab),
+    city: canonicalCity(src.city ?? src.location, vocab),
     exam_year: canonicalYear(src.exam_year),
     source_platform: canonicalPlatform(src.source_platform),
     status: canonicalStatus(src.status),
@@ -242,20 +166,20 @@ export function normalizeFilters(raw: any): LeadSearchFilters {
 }
 
 /** Deterministic parser used when Sarvam is unavailable (and to fill gaps in its output). */
-export function parseQueryKeywords(query: string): LeadSearchFilters {
+export function parseQueryKeywords(query: string, vocab: SearchVocabulary = DEFAULT_VOCABULARY): LeadSearchFilters {
   const filters = emptyFilters();
   let rest = ` ${String(query || "")} `;
   const consume = (match: string) => {
-    rest = rest.replace(new RegExp(`\\b${escapeRegExp(match)}\\b`, "i"), " ");
+    rest = rest.replace(new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escapeRegExp(match)}(?![\\p{L}\\p{M}\\p{N}])`, "iu"), " ");
   };
 
-  const course = findCourse(rest);
+  const course = findCourse(rest, vocab);
   if (course) {
     filters.course_interest = course.course.label;
     consume(course.match);
   }
 
-  const city = findCity(rest);
+  const city = findCity(rest, vocab);
   if (city) {
     filters.city = city.city.label;
     consume(city.match);
@@ -292,7 +216,7 @@ export function parseQueryKeywords(query: string): LeadSearchFilters {
     new Set(
       rest
         .toLowerCase()
-        .split(/[^a-z0-9+#.]+/)
+        .split(/[^\p{L}\p{M}\p{N}+#.]+/u)
         .map((t) => t.replace(/^\.+|\.+$/g, ""))
         .filter((t) => t.length >= 3 && !STOPWORDS.has(t) && !/^\d+$/.test(t))
     )

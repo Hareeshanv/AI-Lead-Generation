@@ -5,6 +5,14 @@ import {
   STEPS,
   runLeadDiscovery,
 } from "../../../../services/discovery/agent";
+import { SarvamTransportError, type SarvamConfig, type SarvamTransport } from "../../../../services/sarvam";
+import {
+  buildVocabulary,
+  DEFAULT_DISCOVERY_SETTINGS,
+  normalizeDiscoverySettings,
+  type DiscoverySettings,
+  type SearchVocabulary,
+} from "../../../../services/search/vocabulary";
 import {
   AGENT_LEAD_SOURCE,
   DISCOVERY_SOURCES,
@@ -17,7 +25,9 @@ import { events, type EventBase } from "../events";
 import { HttpError } from "../http/errors";
 import { rateLimit } from "../http/rateLimit";
 import { getProviderCredentials } from "../integrations/credentials";
+import { OutboundHttpError, safePost } from "../integrations/safeHttp";
 import { enqueueJob, PermanentJobError, registerJobHandler } from "../jobs/registry";
+import { scoredFields } from "../services/leads/service";
 
 declare module "../events" {
   interface DomainEventMap {
@@ -42,7 +52,37 @@ export const agentRunLimit = rateLimit({ name: "agent-run", windowMs: 10 * 60 * 
 
 export interface AgentCredentials {
   serperApiKey: string;
-  sarvam: { apiKey: string; baseUrl?: string | null; model?: string | null };
+  sarvam: SarvamConfig & { apiKey: string };
+}
+
+/** Chat completion replies are far larger than safeHttp's 64 KB default. */
+const SARVAM_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Sarvam requests through safeHttp: the workspace base URL is re-validated (https, public address,
+ * connection pinned) on every request, so it cannot be pointed at internal services.
+ */
+export const safeSarvamTransport: SarvamTransport = async ({ url, headers, body, timeoutMs }) => {
+  try {
+    const res = await safePost(url, body, { headers, timeoutMs, maxResponseBytes: SARVAM_MAX_RESPONSE_BYTES, maxRedirects: 0 });
+    if (res.truncated) throw new SarvamTransportError("the response was too large", false);
+    return { status: res.status, body: res.body };
+  } catch (err) {
+    if (err instanceof OutboundHttpError) throw new SarvamTransportError(err.message, true);
+    throw err;
+  }
+};
+
+/** A workspace-supplied base URL always goes through the safe transport; the server default uses fetch. */
+function toSarvamConfig(credentials: Record<string, string>): SarvamConfig & { apiKey: string } {
+  const baseUrl = credentials.baseUrl?.trim() || null;
+  return { apiKey: credentials.apiKey, baseUrl, model: credentials.model || null, transport: baseUrl ? safeSarvamTransport : null };
+}
+
+/** Workspace Sarvam credentials, or null when no API key is set. */
+export async function workspaceSarvamConfig(orgId: string): Promise<(SarvamConfig & { apiKey: string }) | null> {
+  const sarvam = await getProviderCredentials(orgId, "sarvam");
+  return sarvam?.apiKey ? toSarvamConfig(sarvam) : null;
 }
 
 export async function agentConfigStatus(orgId: string): Promise<{ serperConfigured: boolean; sarvamConfigured: boolean }> {
@@ -69,7 +109,7 @@ export async function requireAgentCredentials(orgId: string): Promise<AgentCrede
   }
   return {
     serperApiKey: serper!.apiKey,
-    sarvam: { apiKey: sarvam!.apiKey, baseUrl: sarvam!.baseUrl || null, model: sarvam!.model || null },
+    sarvam: toSarvamConfig(sarvam!),
   };
 }
 
@@ -111,7 +151,7 @@ export async function startDiscoveryRun(orgId: string, actorId: string | null, i
   const run = await agentsDb.createRun(orgId, {
     campaign_name: DISCOVERY_CAMPAIGN,
     query: input.query,
-    location: input.location,
+    location: input.location || null,
     category: input.sources.join(","),
     target_count: input.maxResults,
     status: "queued",
@@ -122,17 +162,29 @@ export async function startDiscoveryRun(orgId: string, actorId: string | null, i
     await agentsDb.updateRun(orgId, run.id, { status: "failed", completed_at: new Date().toISOString() }).catch(() => null);
     throw err;
   }
-  await agentsDb.log(orgId, DISCOVERY_AGENT_ID, "info", `[${run.id}] Queued "${input.query}" in ${input.location}`);
+  await agentsDb.log(orgId, DISCOVERY_AGENT_ID, "info", `[${run.id}] Queued "${input.query}"${input.location ? ` in ${input.location}` : ""}`);
   events.emit("agent.run_started", { orgId, actorId, runId: run.id, query: input.query, location: input.location });
   return run;
 }
 
-async function scoringThresholds(orgId: string): Promise<ScoringThresholds> {
+export interface DiscoveryWorkspaceSettings {
+  thresholds: ScoringThresholds;
+  discovery: DiscoverySettings;
+}
+
+/** Scoring thresholds and discovery settings; defaults when the settings row cannot be read. */
+export async function discoveryWorkspaceSettings(orgId: string): Promise<DiscoveryWorkspaceSettings> {
   try {
-    return (await settingsDb.get(orgId)).scoring;
+    const settings = await settingsDb.get(orgId);
+    return { thresholds: settings.scoring, discovery: normalizeDiscoverySettings(settings.discovery) };
   } catch {
-    return DEFAULT_SCORING;
+    return { thresholds: DEFAULT_SCORING, discovery: DEFAULT_DISCOVERY_SETTINGS };
   }
+}
+
+/** The workspace's interest/city vocabulary for matching course and city filters. */
+export async function workspaceVocabulary(orgId: string): Promise<SearchVocabulary> {
+  return buildVocabulary((await discoveryWorkspaceSettings(orgId)).discovery);
 }
 
 registerJobHandler(AGENT_RUN_JOB, async ({ runId, actorId }, ctx) => {
@@ -143,6 +195,7 @@ registerJobHandler(AGENT_RUN_JOB, async ({ runId, actorId }, ctx) => {
 
   try {
     const credentials = await requireAgentCredentials(orgId);
+    const { thresholds, discovery } = await discoveryWorkspaceSettings(orgId);
     const result = await runLeadDiscovery({
       orgId,
       runId,
@@ -152,7 +205,9 @@ registerJobHandler(AGENT_RUN_JOB, async ({ runId, actorId }, ctx) => {
       maxResults: run.target_count || 30,
       serperApiKey: credentials.serperApiKey,
       sarvam: credentials.sarvam,
-      thresholds: await scoringThresholds(orgId),
+      thresholds,
+      discovery,
+      scoreRow: (row) => ({ ...row, ...scoredFields(row, thresholds, false) }),
     });
 
     await agentsDb.updateRun(orgId, runId, {
@@ -160,6 +215,7 @@ registerJobHandler(AGENT_RUN_JOB, async ({ runId, actorId }, ctx) => {
       total_leads_found: result.leadsCreated + result.signalsSaved,
       high_score_leads: result.highScore,
       duration_ms: result.durationMs,
+      tokens_used: result.tokensUsed,
       completed_at: new Date().toISOString(),
     });
 
@@ -227,14 +283,15 @@ export async function convertSignalsToLeads(
   const missing = ids.filter((id) => !found.has(id));
   if (signals.length === 0) return { results: [], created: 0, existing: 0, missing };
 
-  const thresholds = await scoringThresholds(orgId);
+  const { thresholds } = await discoveryWorkspaceSettings(orgId);
   const now = new Date().toISOString();
   const index = indexLeadsBySignalKeys(await agentsDb.listLeadContacts(orgId));
 
   const results: ConvertedSignal[] = [];
   const toInsert: { signalId: string; row: Record<string, any> }[] = [];
   for (const signal of signals) {
-    const row = signalToLeadRow(signal, thresholds, now);
+    const base = signalToLeadRow(signal, thresholds, now);
+    const row: Record<string, any> = { ...base, ...scoredFields(base, thresholds, false) };
     const keys = signalLeadKeys(row);
     const existingId = keys.map((k) => index.get(k)).find(Boolean);
     if (existingId) {

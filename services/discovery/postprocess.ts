@@ -12,6 +12,7 @@ import {
   type IntentSignalRow,
   type RequestedContact,
 } from "../signals";
+import { mentionsTerm } from "../search/vocabulary";
 import { sourceChannelFromUrl, type SerperPlace, type SerperResult } from "./serper";
 
 export const DISCOVERY_SOURCES = ["web", "places"] as const;
@@ -25,7 +26,6 @@ export const PLACES_CHANNEL = "Google Maps";
 const PER_PLATFORM_CAP = 5;
 export const MIN_INTENT_SCORE = 20;
 export const MIN_PLACE_SCORE = 20;
-const CONTACT_REQUESTED_MIN_SCORE = 80;
 const MINOR_RE =
   /\b(?:class|std|standard|grade)\s*(?:11|12|xi|xii)(?:th)?\b|\b(?:11|12)th\b|\b(?:1st|2nd|first|second)?\s*puc?\b|\bmy (?:son|daughter|kid|child)\b/i;
 const REPLY_FORBIDDEN_RE = /https?:\/\/|www\.|\.(?:com|in|org|net|io)\b|\b(?:phone|mobile|number|e-?mail|whatsapp|dm me)\b/i;
@@ -38,6 +38,8 @@ export interface ScoringThresholds {
   hot: number;
   warm: number;
 }
+
+export const DEFAULT_THRESHOLDS: ScoringThresholds = { hot: 80, warm: 50 };
 
 export function normalizeUrl(link: string): string {
   try {
@@ -90,10 +92,18 @@ export function requestedContact(candidate: SerperResult): RequestedContact {
   return fromSnippet.contact_requested ? fromSnippet : requestedContactFromText(candidate.title);
 }
 
-export function scoreBand(score: number): { urgency: "high" | "medium" | "low"; routing: "hot" | "warm" | "nurture" } {
-  if (score >= 80) return { urgency: "high", routing: "hot" };
-  if (score >= 50) return { urgency: "medium", routing: "warm" };
+export function scoreBand(
+  score: number,
+  thresholds: ScoringThresholds = DEFAULT_THRESHOLDS
+): { urgency: "high" | "medium" | "low"; routing: "hot" | "warm" | "nurture" } {
+  if (score >= thresholds.hot) return { urgency: "high", routing: "hot" };
+  if (score >= thresholds.warm) return { urgency: "medium", routing: "warm" };
   return { urgency: "low", routing: "nurture" };
+}
+
+/** "exact" when the text names the city or one of its aliases (any script); null otherwise. */
+export function textLocationMatch(text: string, aliases: string[]): "exact" | null {
+  return aliases.some((alias) => mentionsTerm(text, alias)) ? "exact" : null;
 }
 
 /** Contact-requested posts first, then highest intent. */
@@ -143,9 +153,12 @@ export function interleave(lists: Candidate[][], limit: number): Candidate[] {
 
 export interface SignalContext {
   query: string;
+  /** "" when the run has no location. */
   city: string;
   cityAliases: string[];
   now: string;
+  /** Workspace thresholds for urgency / routing; contact requests are raised to at least `hot`. */
+  thresholds?: ScoringThresholds;
 }
 
 /**
@@ -153,6 +166,7 @@ export interface SignalContext {
  * customers above MIN_INTENT_SCORE are kept; contacts are kept only when verified in the post text.
  */
 export function buildSignalRows(batch: Candidate[], items: unknown[], ctx: SignalContext): IntentSignalRow[] {
+  const thresholds = ctx.thresholds ?? DEFAULT_THRESHOLDS;
   const rows: IntentSignalRow[] = [];
   const used = new Set<number>();
   for (const raw of items) {
@@ -166,14 +180,13 @@ export function buildSignalRows(batch: Candidate[], items: unknown[], ctx: Signa
 
     const contact = requestedContact(candidate);
     const score = contact.contact_requested
-      ? Math.max(cleanScore(item.intent_score), CONTACT_REQUESTED_MIN_SCORE)
+      ? Math.max(cleanScore(item.intent_score), cleanScore(thresholds.hot))
       : cleanScore(item.intent_score);
     if (score < MIN_INTENT_SCORE) continue;
 
-    const band = scoreBand(score);
+    const band = scoreBand(score, thresholds);
     const rawText = `${candidate.title}\n${candidate.snippet}`;
     const minor = isTrue(item.is_minor) || MINOR_RE.test(rawText);
-    const lowerText = rawText.toLowerCase();
     rows.push({
       post_url: candidate.link,
       source_channel: sourceChannelFromUrl(candidate.link),
@@ -181,12 +194,12 @@ export function buildSignalRows(batch: Candidate[], items: unknown[], ctx: Signa
       author_handle: cleanHandle(item.author_handle, candidate),
       post_excerpt: cleanText(candidate.snippet || candidate.title, 2000),
       post_date: cleanText(candidate.date, 100),
-      city: ctx.city,
-      location_match: isLocationMatch(item.location_match)
-        ? item.location_match
-        : ctx.cityAliases.some((a) => new RegExp(`\\b${a.replace(/[^a-z0-9 ]/g, "")}\\b`).test(lowerText))
-          ? "exact"
-          : null,
+      city: ctx.city || null,
+      location_match: !ctx.city
+        ? null
+        : isLocationMatch(item.location_match)
+          ? item.location_match
+          : textLocationMatch(rawText, ctx.cityAliases),
       course_interest: cleanText(item.interest ?? item.course_interest, 200) || ctx.query,
       urgency: band.urgency,
       budget: null,
@@ -262,9 +275,42 @@ export interface LeadContactLike {
   email?: string | null;
   phone?: string | null;
   profile_url?: string | null;
+  name?: string | null;
+  source_channel?: string | null;
+  /** Google Maps listing id and address; read from raw_answers.place when not given directly. */
+  place_cid?: string | null;
+  place_address?: string | null;
+  raw_answers?: Record<string, any> | null;
 }
 
-/** Keys that identify the same lead: "email:…", "phone:…", "domain:…". */
+/** Lowercase letters and digits of any script, single-spaced ("Acme Academy, MG Road" -> "acme academy mg road"). */
+export function normalizePlaceText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** "cid:…" and "place:<name>|<address>" for one Google Maps listing. */
+export function placeKeys(place: { cid?: string | null; title?: string | null; address?: string | null }): string[] {
+  const keys: string[] = [];
+  const cid = typeof place.cid === "string" ? place.cid.trim() : "";
+  if (cid) keys.push(`cid:${cid}`);
+  const name = normalizePlaceText(place.title);
+  if (name) keys.push(`place:${name}|${normalizePlaceText(place.address)}`);
+  return keys;
+}
+
+function leadPlace(lead: LeadContactLike): { cid: string | null; address: string | null } | null {
+  const place = lead.raw_answers && typeof lead.raw_answers.place === "object" ? lead.raw_answers.place : null;
+  const cid = lead.place_cid ?? (place?.cid != null ? String(place.cid) : null);
+  if (lead.source_channel !== PLACES_CHANNEL && !cid) return null;
+  return { cid, address: lead.place_address ?? (typeof place?.address === "string" ? place.address : null) };
+}
+
+/** Keys that identify the same lead: "email:…", "phone:…", "domain:…", plus "cid:…" / "place:…" for Google Maps leads. */
 export function leadDedupeKeys(lead: LeadContactLike): string[] {
   const keys: string[] = [];
   const email = normalizeEmail(lead.email);
@@ -273,6 +319,8 @@ export function leadDedupeKeys(lead: LeadContactLike): string[] {
   if (phone) keys.push(`phone:${phone}`);
   const domain = domainKey(lead.profile_url);
   if (domain) keys.push(`domain:${domain}`);
+  const place = leadPlace(lead);
+  if (place) keys.push(...placeKeys({ cid: place.cid, title: lead.name, address: place.address }));
   return keys;
 }
 
@@ -289,7 +337,7 @@ export interface DedupeResult<T> {
 
 /**
  * Splits candidate leads into new ones and duplicates. A candidate is a duplicate when any of its
- * email / phone / domain keys matches an existing lead or an earlier candidate in the same list.
+ * email / phone / domain / place keys matches an existing lead or an earlier candidate in the same list.
  */
 export function dedupeLeadCandidates<T extends LeadContactLike>(candidates: T[], existingKeys: Set<string>): DedupeResult<T> {
   const seen = new Set(existingKeys);
@@ -351,7 +399,7 @@ export function buildPlaceLeadRow(place: SerperPlace, scored: PlaceScore, ctx: P
     email: null,
     phone: place.phoneNumber,
     phone_source: place.phoneNumber ? "google_places" : null,
-    location: place.address?.slice(0, 500) ?? ctx.city,
+    location: place.address?.slice(0, 500) ?? (ctx.city || null),
     industry: place.category?.slice(0, 200) ?? null,
     profile_url: place.website,
     profile_url_source: place.website ? "google_places" : null,
@@ -364,7 +412,8 @@ export function buildPlaceLeadRow(place: SerperPlace, scored: PlaceScore, ctx: P
     raw_answers: {
       pipeline_run_id: ctx.runId,
       discovery_query: ctx.query,
-      discovery_location: ctx.city,
+      discovery_location: ctx.city || null,
+      fit_score: scored.score,
       fit_reason: scored.reason,
       scored_by: scored.scoredBy,
       place: {
@@ -402,14 +451,14 @@ export function parsePlaceScores(items: unknown[], batchSize: number): Map<numbe
   return out;
 }
 
-/** Same business listed twice (same cid, or same name + address) is kept once. */
+/** Same business listed twice (same cid, or same normalised name + address) is kept once. */
 export function uniquePlaces(places: SerperPlace[]): SerperPlace[] {
   const seen = new Set<string>();
   const out: SerperPlace[] = [];
   for (const p of places) {
-    const key = p.cid ? `cid:${p.cid}` : `na:${p.title.toLowerCase()}|${(p.address || "").toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const keys = placeKeys(p);
+    if (keys.some((k) => seen.has(k))) continue;
+    for (const k of keys) seen.add(k);
     out.push(p);
   }
   return out;
@@ -450,6 +499,8 @@ export function signalToLeadRow(signal: Record<string, any>, thresholds: Scoring
   const email = contact && contact.includes("@") ? normalizeEmail(contact) : null;
   const phone = contact && !contact.includes("@") ? contact.trim() : null;
   const score = cleanScore(signal.intent_score);
+  const hasIntentScore =
+    signal.intent_score !== null && signal.intent_score !== undefined && signal.intent_score !== "" && Number.isFinite(Number(signal.intent_score));
   const platform = typeof signal.platform === "string" && signal.platform ? signal.platform : "web";
   return {
     name: (typeof signal.author_handle === "string" && signal.author_handle.trim()) || `${platform} user`,
@@ -472,6 +523,7 @@ export function signalToLeadRow(signal: Record<string, any>, thresholds: Scoring
     tags: ["ai-agent", "intent-signal"],
     raw_answers: {
       intent_signal_id: signal.id ?? null,
+      intent_score: hasIntentScore ? score : null,
       post_excerpt: signal.post_excerpt ?? null,
       contact_request_quote: signal.contact_request_quote ?? null,
       discovery_query: signal.search_query ?? null,

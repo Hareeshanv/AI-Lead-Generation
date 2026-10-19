@@ -16,6 +16,8 @@ export interface PipelineRunRow {
   total_leads_found: number | null;
   high_score_leads: number | null;
   duration_ms: number | null;
+  /** Sarvam tokens used by the run's steps. */
+  tokens_used: number | null;
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -51,6 +53,10 @@ export interface ExistingLeadContact {
   email: string | null;
   phone: string | null;
   profile_url: string | null;
+  name: string | null;
+  source_channel: string | null;
+  place_cid: string | null;
+  place_address: string | null;
 }
 
 export interface InsertAgentLeadsResult {
@@ -60,7 +66,7 @@ export interface InsertAgentLeadsResult {
 }
 
 const RUN_COLUMNS =
-  "id, org_id, campaign_name, query, category, location, target_count, status, total_leads_found, high_score_leads, duration_ms, started_at, completed_at, created_at";
+  "id, org_id, campaign_name, query, category, location, target_count, status, total_leads_found, high_score_leads, duration_ms, tokens_used, started_at, completed_at, created_at";
 
 const RUN_STAT_COLUMNS = "id, status, duration_ms, total_leads_found, high_score_leads, created_at";
 
@@ -243,19 +249,21 @@ export const agentsDb = {
     return (data || []) as AgentLogRow[];
   },
 
-  /** Contact columns of the org's newest leads, for duplicate detection. */
+  /** Contact and Google Maps listing columns of the org's newest leads, for duplicate detection. */
   async listLeadContacts(orgId: string, limit = 10_000): Promise<ExistingLeadContact[]> {
     const rows: ExistingLeadContact[] = [];
     const pageSize = 1000;
     for (let from = 0; from < limit; from += pageSize) {
       const { data, error } = await dbClient
         .from("leads")
-        .select("id, email, phone, profile_url")
+        .select(
+          "id, email, phone, profile_url, name, source_channel, place_cid:raw_answers->place->>cid, place_address:raw_answers->place->>address"
+        )
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .range(from, Math.min(from + pageSize, limit) - 1);
       if (error) throw dbError("list lead contacts", error);
-      rows.push(...((data || []) as ExistingLeadContact[]));
+      rows.push(...((data || []) as unknown as ExistingLeadContact[]));
       if (!data || data.length < pageSize) break;
     }
     return rows;
